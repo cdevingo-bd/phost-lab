@@ -1,0 +1,3 @@
+{"version": 1, "name": "coupled-scan", "host": "mjwarp", "plugins": ["coupledchol.phost_impl"],
+ "note": "coupled-block Cholesky, coupled set found by scanning H",
+ "stages": {"newton.linear_solve": {"impl": "newton.linear_solve/coupled", "params": {}}}}

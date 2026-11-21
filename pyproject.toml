@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phost-lab"
+version = "0.1.0.dev0"
+description = "Headless lab for phost: graph specs, scenes, an isolated runner and metrics"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = ["phost", "numpy>=1.24"]
+
+[project.optional-dependencies]
+mjwarp = ["mujoco", "mujoco-warp", "warp-lang"]
+test = ["pytest>=7"]
+
+[project.scripts]
+phost-lab = "phost_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
