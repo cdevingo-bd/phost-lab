@@ -37,6 +37,19 @@ def trampoline_xml(n: int = 12) -> str:
 """
 
 
+def arm_xml(links: int = 7) -> str:
+    """A chain of hinge links, each with a motor. Gravity swings it; a controller can hold or drive it."""
+    open_tags, close_tags = [], []
+    for i in range(links):
+        offset = "0 0 1.5" if i == 0 else "0.2 0 0"
+        open_tags.append(f'<body pos="{offset}"><joint name="j{i}" type="hinge" axis="0 1 0" damping="0.01"/>'
+                         f'<geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" mass="0.2"/>')
+        close_tags.append("</body>")
+    motors = "".join(f'<motor joint="j{i}" gear="20" ctrlrange="-1 1"/>' for i in range(links))
+    return (f'<mujoco><option timestep="0.002" integrator="Euler" solver="Newton"/><worldbody>'
+            f'{"".join(open_tags)}{"".join(close_tags)}</worldbody><actuator>{motors}</actuator></mujoco>')
+
+
 @dataclass(frozen=True)
 class Scene:
     id: str
@@ -78,4 +91,6 @@ def default_scenes() -> SceneRegistry:
                       f"membrane {n}x{n}, nv={nv}, 1.2 s in: balls hitting the sheet", ("flex", "contact")))
         reg.add(Scene(f"trampoline{n}:rest", lambda n=n: trampoline_xml(n), 10000,
                       f"membrane {n}x{n}, nv={nv}, 5 s in: balls resting on the sheet", ("flex", "contact")))
+    reg.add(Scene("arm7:swing", lambda: arm_xml(7), 0,
+                  "7-link hinge chain with a motor per joint, released horizontal; nv=7, nu=7", ("actuated",)))
     return reg

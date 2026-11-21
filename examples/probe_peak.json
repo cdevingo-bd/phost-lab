@@ -1,0 +1,13 @@
+{
+ "version": 1,
+ "name": "probe-peak",
+ "host": "mjwarp",
+ "plugins": [],
+ "note": "observer: three numbers per world after forward dynamics; must not change the trajectory",
+ "stages": {
+  "probe.state": {
+   "impl": "probe.state/peak",
+   "params": {}
+  }
+ }
+}

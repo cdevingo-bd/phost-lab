@@ -1,0 +1,17 @@
+{
+ "version": 1,
+ "name": "pd-arm",
+ "host": "mjwarp",
+ "plugins": [],
+ "note": "model-changing: a PD controller on every actuator; run on arm7:swing",
+ "stages": {
+  "control.law": {
+   "impl": "control.law/pd",
+   "params": {
+    "kp": 30.0,
+    "kd": 2.0,
+    "target": 0.0
+   }
+  }
+ }
+}

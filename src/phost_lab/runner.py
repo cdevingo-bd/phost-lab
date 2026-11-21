@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 
 import phost
+from phost import SwapClass
 from .graph import GraphSpec
 from .metrics import accuracy_ratio
 from .scene import Scene
@@ -127,8 +128,18 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
             result["cells"].append(cell)
             del keep, graphs, finals
             gc.collect()
+    result["comparable_to_native"] = comparable_to_native(graph, registry)
     result["pass"] = all(c["verdict"]["ok"] for c in result["cells"])
     return result
+
+
+def comparable_to_native(graph: GraphSpec, registry: phost.Registry) -> bool:
+    """False when any selected stage changes the model: such a graph has no native answer to match."""
+    for node in graph.stages.values():
+        impl = registry.impl(node.impl)
+        if registry.contract(impl.stage, impl.stage_version).swap_class is SwapClass.MODEL_CHANGING:
+            return False
+    return True
 
 
 def _verdict(cell: dict, final_qpos, registry, graph: GraphSpec, config: RunConfig) -> dict:
@@ -136,9 +147,13 @@ def _verdict(cell: dict, final_qpos, registry, graph: GraphSpec, config: RunConf
     if not np.isfinite(final_qpos).all():
         problems.append("non-finite qpos")
     ratio = cell["accuracy_ratio"]
-    if ratio is not None and ratio > config.max_accuracy_ratio:
+    changing = comparable_to_native(graph, registry) is False
+    if changing:
+        notes.append("a model-changing stage is selected: the trajectory is expected to differ from native, so accuracy "
+                     "against native is reported but not gated (each stage is judged against its own float64 law)")
+    elif ratio is not None and ratio > config.max_accuracy_ratio:
         problems.append(f"accuracy ratio {ratio:.2f} exceeds {config.max_accuracy_ratio}")
-    if ratio is None:
+    elif ratio is None:
         notes.append("accuracy ratio not defined: the native control is at rounding-noise level")
     if cell["native_spread"] > config.max_native_spread:
         notes.append(f"timing unreliable: the two native runs differ by {cell['native_spread']:.1%}")

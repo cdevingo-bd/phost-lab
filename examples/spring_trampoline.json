@@ -1,0 +1,17 @@
+{
+ "version": 1,
+ "name": "spring-trampoline",
+ "host": "mjwarp",
+ "plugins": [],
+ "note": "model-changing: extra spring-damper on every slide and hinge DOF",
+ "stages": {
+  "dof.passive_force": {
+   "impl": "dof.passive_force/spring-damper",
+   "params": {
+    "k": 2.0,
+    "c": 0.05,
+    "q_ref": 0.0
+   }
+  }
+ }
+}

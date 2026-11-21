@@ -133,3 +133,55 @@ def test_isolated_crash_without_a_result_is_reported(tmp_path):
 def test_isolated_timeout_is_reported(tmp_path):
     out = run_isolated(GraphSpec("g"), "trampoline8:impact", CONFIG, python=script(tmp_path, "sleep 10"), timeout=0.5)
     assert out["pass"] is False and "timed out" in out["error"]
+
+
+# ---- model-changing graphs are not compared with native ----
+
+@pytest.fixture
+def full_registry():
+    from phost import Registry
+    return load_registry([], Registry())
+
+
+def graph_of(stage, impl):
+    return GraphSpec("g", {stage: Node(impl)})
+
+
+def test_load_registry_has_every_shipped_stage(full_registry):
+    names = {c.name for c in full_registry.contracts()}
+    assert names == {"newton.linear_solve", "dof.passive_force", "control.law", "probe.state"}
+    assert full_registry.impl("control.law/pd") and full_registry.impl("probe.state/peak")
+
+
+def test_only_model_changing_stages_make_a_graph_incomparable(full_registry):
+    from phost_lab.runner import comparable_to_native
+    assert comparable_to_native(GraphSpec("n"), full_registry)
+    assert comparable_to_native(graph_of("probe.state", "probe.state/peak"), full_registry)
+    assert comparable_to_native(graph_of(STAGE, "newton.linear_solve/native"), full_registry)
+    assert not comparable_to_native(graph_of("dof.passive_force", "dof.passive_force/spring-damper"), full_registry)
+    assert not comparable_to_native(graph_of("control.law", "control.law/pd"), full_registry)
+
+
+def metrics_for(stage):
+    return {stage: dict(calls=1)}
+
+
+def test_a_model_changing_graph_is_not_failed_for_differing_from_native(full_registry):
+    g = graph_of("control.law", "control.law/pd")
+    c = cell(accuracy_ratio=1e9, stage_metrics=metrics_for("control.law"))
+    v = _verdict(c, np.zeros(3), full_registry, g, CONFIG)
+    assert v["ok"] and any("model-changing" in n for n in v["notes"])
+
+
+def test_an_observer_that_changes_the_trajectory_is_failed(full_registry):
+    g = graph_of("probe.state", "probe.state/peak")
+    c = cell(accuracy_ratio=1e9, stage_metrics=metrics_for("probe.state"))
+    v = _verdict(c, np.zeros(3), full_registry, g, CONFIG)
+    assert not v["ok"] and "accuracy ratio" in v["problems"][0]
+
+
+def test_actuated_scene_has_a_motor_per_joint():
+    mujoco = pytest.importorskip("mujoco")
+    from phost_lab import default_scenes
+    model = mujoco.MjModel.from_xml_string(default_scenes().get("arm7:swing").xml())
+    assert (model.nv, model.nu) == (7, 7)
