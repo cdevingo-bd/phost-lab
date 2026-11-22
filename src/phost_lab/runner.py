@@ -196,11 +196,14 @@ def per_call(curves: dict) -> dict:
 
 
 def stage_classes(graph: GraphSpec, registry: phost.Registry) -> dict[str, str]:
-    """Stage name -> swap class value, so a result says how it must be judged without needing the registry."""
+    """Stage name -> swap class value, so a result says how it must be judged without needing the registry.
+
+    An implementation may declare itself less exact than its stage (a typed solver step on an exact solve is approximate): the
+    class of what was selected is what counts, so it is ranked on speed and accuracy and not on speed alone."""
     classes = {}
     for stage, node in graph.stages.items():
         impl = registry.impl(node.impl)
-        classes[stage] = registry.contract(stage, impl.stage_version).swap_class.value
+        classes[stage] = (impl.swap_class or registry.contract(stage, impl.stage_version).swap_class).value
     return classes
 
 

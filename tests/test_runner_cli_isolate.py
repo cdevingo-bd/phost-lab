@@ -171,6 +171,16 @@ def test_stage_classes_name_how_each_stage_is_judged(full_registry):
     assert stage_classes(GraphSpec("n"), full_registry) == {}
 
 
+def test_an_approximate_implementation_of_an_exact_stage_is_judged_as_approximate(full_registry):
+    """A typed solver step on the (exact) Newton solve declares itself approximate, and the graph is ranked as that."""
+    expression_impls = pytest.importorskip("phost_author.expression_impls")
+    from phost_lab.runner import stage_classes
+    expression_impls.register(full_registry)
+    graph = graph_of(STAGE, "newton.linear_solve/expression")
+    assert stage_classes(graph, full_registry) == {STAGE: "approximate"}
+    assert stage_classes(graph_of(STAGE, "newton.linear_solve/native"), full_registry) == {STAGE: "exact"}
+
+
 def metrics_for(stage):
     return {stage: dict(calls=1)}
 
