@@ -177,11 +177,12 @@ def structure_table(result: dict) -> str:
     return "\n".join(lines)
 
 
-REPORTS = ("applicability", "opportunities", "structure")
+REPORTS = ("applicability", "opportunities", "structure", "profile")
 
 
-def reports(kinds, scene: Scene, scenes: SceneRegistry, registry: phost.Registry, worlds=(1,)) -> dict:
-    """Several of the reports for one scene, by name, in one go (they share a process, so a tool pays for the GPU once)."""
+def reports(kinds, scene: Scene, scenes: SceneRegistry, registry: phost.Registry, worlds=(1,), graph=None) -> dict:
+    """Several of the reports for one scene, by name, in one go (they share a process, so a tool pays for the GPU once).
+    ``graph`` is the experiment the ``profile`` report installs for its second column (none: the native step only)."""
     out: dict[str, Any] = {}
     for kind in kinds:
         if kind == "opportunities":
@@ -190,6 +191,10 @@ def reports(kinds, scene: Scene, scenes: SceneRegistry, registry: phost.Registry
             out[kind] = structure(scene)
         elif kind == "applicability":
             out[kind] = applicability(registry, scenes, [scene.id])
+        elif kind == "profile":
+            from .graph import NATIVE
+            from .profile import profile_scene
+            out[kind] = profile_scene(graph or NATIVE, scene, tuple(worlds), registry)
         else:
             raise phost.ContractError(f"no report {kind!r}; known {list(REPORTS)}")
     return out

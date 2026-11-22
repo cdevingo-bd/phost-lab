@@ -30,7 +30,7 @@ def main() -> int:
         if request.get("mode") == "report":
             from .opportunity import reports
             scenes = load_scenes(request.get("scene_modules", ()), request.get("scene_dirs", ()))
-            out = reports(request["report"]["kinds"], scene, scenes, registry, request["report"].get("worlds", (1,)))
+            out = reports(request["report"]["kinds"], scene, scenes, registry, request["report"].get("worlds", (1,)), graph)
         elif request.get("mode") == "live":
             from .live import LiveConfig, run_live
             out = run_live(graph, scene, LiveConfig(**request.get("live", {})), registry, on_progress=progress)

@@ -156,7 +156,8 @@ class and `register_driver(...)` from a plugin's `register`; the runner does not
 `--steps-per-call`: that varies how many steps a call makes, this varies how a step is made.
 
 The reports above run in a worker too: `run_isolated(..., report=dict(kinds=["opportunities", "structure"], worlds=[1]))`
-returns them as data, which is how phost-dash's Build screen shows them.
+returns them as data (`kinds` also takes `profile`, and the graph in the call is what it installs), which is how phost-dash's
+Build screen shows them.
 
 ## Where the time goes
 

@@ -226,5 +226,8 @@ def test_the_reports_run_in_a_worker_and_come_back_as_data():
     assert out["opportunities"]["cells"][0]["stages"]["effective.solve"]["share"] > 0
     assert out["structure"]["stages"]["effective.solve"]["structure"]["n"] > 0
     assert out["applicability"]["scenes"]["trampoline8:discrete"]["stages"]["effective.solve"]["applies"]
+    profiled = run_isolated(NATIVE, "trampoline8:impact", RunConfig(), timeout=300, report=dict(kinds=["profile"], worlds=[1]))
+    variants = profiled["profile"]["cells"][0]["variants"]
+    assert list(variants) == ["native"] and variants["native"]["full_ms"] > 0 and variants["native"]["phases"]["solver"] > 0
     bad = run_isolated(NATIVE, "trampoline8:discrete", RunConfig(), timeout=300, report=dict(kinds=["nope"]))
     assert "no report 'nope'" in bad["error"]
