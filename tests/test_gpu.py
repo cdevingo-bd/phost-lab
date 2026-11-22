@@ -118,3 +118,53 @@ def test_steps_per_call_reports_the_fixed_cost_of_a_call_and_survives_the_worker
         assert pc[label]["fixed_ms"] >= 0 and pc[label]["per_step_ms"] > 0
     assert len(pc["speedup"]) == 3
     assert "fixed ms" in _table(out)
+
+
+def _full_registry():
+    from phost import Registry
+    from phost_lab.bootstrap import load_registry
+    return load_registry([], Registry())
+
+
+def test_applicability_matrix_is_read_from_what_the_host_refuses():
+    from phost_lab.opportunity import applicability, applicability_table
+    result = applicability(_full_registry(), default_scenes(), ["trampoline8:impact", "trampoline8:discrete", "arm7:swing"])
+    cells = {scene: data["stages"] for scene, data in result["scenes"].items()}
+    assert not cells["trampoline8:impact"]["effective.solve"]["applies"]
+    assert "discrete integrator" in cells["trampoline8:impact"]["effective.solve"]["reason"]
+    assert cells["trampoline8:discrete"]["effective.solve"]["applies"]
+    assert cells["trampoline8:discrete"]["effective.solve"]["reason"] is None
+    for scene in cells:                                              # a stage that attaches anywhere applies everywhere
+        assert cells[scene]["body.wrench"]["applies"] and cells[scene]["newton.linear_solve"]["applies"]
+    assert "no actuators" in cells["trampoline8:impact"]["control.law"]["impls"]["control.law/pd"]
+    assert "bypasses this stage" in cells["trampoline8:discrete"]["dof.passive_force"]["impls"]["dof.passive_force/spring-damper"]
+    text = applicability_table(result)
+    assert "effective.solve" in text and "why not:" in text and "no actuators" in text
+
+
+def test_scene_for_is_the_first_scene_where_the_stage_is_accepted():
+    from phost_lab.opportunity import scene_for
+    registry, scenes = _full_registry(), default_scenes()
+    assert scene_for("newton.linear_solve", scenes, registry) == "trampoline8:impact"
+    assert scene_for("effective.solve", scenes, registry) == "trampoline8:discrete"
+    assert scene_for("body.wrench", scenes, registry) == "trampoline8:impact"      # only a native implementation: the host's acceptance decides
+    assert scene_for("no.such.stage", scenes, registry) is None
+
+
+def test_opportunities_give_each_stage_a_share_and_a_ceiling_only_where_a_swap_is_a_speed_swap():
+    from phost_lab.opportunity import opportunities, opportunities_table
+    scenes = default_scenes()
+    flat = opportunities(scenes.get("trampoline8:impact"), (1,), launches=2, repeats=3)["cells"][0]
+    assert not flat["stages"]["effective.solve"]["applies"]
+    assert flat["stages"]["effective.solve"]["native_ms"] is None                  # n/a here, so nothing was timed
+    discrete = opportunities(scenes.get("trampoline8:discrete"), (1,), launches=2, repeats=3)["cells"][0]
+    eff = discrete["stages"]["effective.solve"]
+    assert 0 < eff["share"] < 1 and eff["ceiling"] >= 1.0 and eff["enclosing"] is None
+    assert eff["ceiling"] == pytest.approx(1.0 / (1.0 - eff["share"]))
+    newton = discrete["stages"]["newton.linear_solve"]
+    assert newton["enclosing"] and "solver.solve" in newton["enclosing"] and newton["ceiling"] is None   # an upper bound is not a ceiling
+    assert discrete["stages"]["probe.state"]["native_ms"] is None                  # an observer has nothing to time alone
+    assert discrete["stages"]["body.wrench"]["ceiling"] is None                    # model changing: no speed swap
+    assert discrete["launch_floor_ms"] > 0 and discrete["step_ms"] > discrete["launch_floor_ms"]
+    text = opportunities_table(dict(scene="trampoline8:discrete", cells=[discrete]))
+    assert "upper bound" in text and "effective.solve" in text and "x" in text

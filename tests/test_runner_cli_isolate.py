@@ -149,7 +149,7 @@ def graph_of(stage, impl):
 
 def test_load_registry_has_every_shipped_stage(full_registry):
     names = {c.name for c in full_registry.contracts()}
-    assert names == {"newton.linear_solve", "effective.solve", "dof.passive_force", "control.law", "probe.state"}
+    assert names == {"newton.linear_solve", "effective.solve", "dof.passive_force", "control.law", "probe.state", "body.wrench"}
     assert full_registry.impl("control.law/pd") and full_registry.impl("probe.state/peak")
 
 

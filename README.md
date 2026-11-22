@@ -60,6 +60,61 @@ Anything a wrapper adds on top, such as converting state between frameworks on e
 what is being timed. deform3d's notes put that at 4.5-6 ms per call for a JAX wrapper, which is more than a whole step here,
 so a speedup measured per step can read very differently from one measured per call.
 
+## Where a change can apply
+
+```
+phost-lab --plugin phost_coupledchol.phost_impl applicability --scene trampoline12:impact --scene trampoline12:discrete --scene tank:boat
+```
+
+```
+stage                  trampoline12:impact  trampoline12:discrete  tank:boat
+newton.linear_solve                    yes                    yes        yes
+dof.passive_force                      yes                    yes        yes
+control.law                            yes                    yes        yes
+probe.state                            yes                    yes        yes
+effective.solve                         no                    yes         no
+body.wrench                            yes                    yes        yes
+
+why not:
+  trampoline12:impact: effective.solve is refused: the host only calls this solve with the discrete integrator
+  trampoline12:discrete: control.law/pd does not apply: the discrete integrator builds its own effective-force solve, which bypasses this stage
+  tank:boat: newton.linear_solve/coupled does not apply: nv=622 is outside 1..512
+```
+
+Stages by scenes, with the reason for each "no". Nothing is run: the matrix is read from the host's own refusal for a stage
+and each implementation's own `applicable`, the same data a session uses to refuse an install. A stage added to the host, or
+an implementation added by a plugin, appears here without any change to the lab. `phost_lab.opportunity.scene_for(stage, ...)`
+uses the same data to pick the first scene on which a stage applies, which is how phost-author chooses where to check a
+submission.
+
+## What a stage could be worth
+
+```
+phost-lab opportunities --scene trampoline12:discrete --worlds 1 8
+```
+
+```
+1 world(s), nv=330, discrete integrator: whole step 1.760 ms (graph-launch floor 0.004 ms, subtracted from each stage)
+  stage                 class            native ms   share  ceiling  note
+  newton.linear_solve   exact           <=   1.102<=  63%        -  upper bound: the solver phase (solver.solve), which runs the stage once per Newton iteration
+  dof.passive_force     model changing       0.035     2%        -  changes the physics or only observes: not a speed swap
+  control.law           model changing       0.013     1%        -  changes the physics or only observes: not a speed swap
+  probe.state           observer                                     attaches after the whole step; nothing to time alone
+  effective.solve       exact                0.149     8%    1.09x
+  body.wrench           model changing       0.000     0%        -  changes the physics or only observes: not a speed swap
+```
+
+For each stage: how long the host's own version takes, its share of the whole step, and, for a swap that should give the same
+answer (exact or approximate), the ceiling `1 / (1 - share)`: what an infinitely fast replacement would gain. Each stage's
+binding says how to run the host's version once (`NativeTiming`); the lab replays it as its own CUDA graph, subtracts the
+cost of replaying a graph of one empty kernel, and compares with the whole step timed on separate data. A stage whose
+host version cannot run alone (the Newton solve runs inside the solver loop) is reported as the enclosing phase and marked
+`<=`, an upper bound, with no ceiling. A stage that changes the physics or only observes has a share but no ceiling, because
+being faster than the host is not what it is for. A stage that does not apply to the scene says why instead of a time.
+
+Here the effective solve is 8% of the step, so no replacement can give more than 1.09x; this is the calculation that
+`profile` below confirms for one replacement.
+
 ## Where the time goes
 
 ```

@@ -1,4 +1,4 @@
-"""``phost-lab``: list, validate, run and profile graphs."""
+"""``phost-lab``: list, validate, run, profile and survey graphs, scenes and stages."""
 
 from __future__ import annotations
 
@@ -57,6 +57,15 @@ def main(argv=None) -> int:
     r.add_argument("--out", help="write the full JSON result here")
     r.add_argument("--timeout", type=float, default=900.0)
     r.add_argument("--no-isolate", action="store_true", help="run in this process (faster, no crash isolation)")
+    ap_ = sub.add_parser("applicability", allow_abbrev=False,
+                         help="which stages (and implementations) apply to which scenes, and why not")
+    ap_.add_argument("--scene", action="append", default=[], help="a scene id; repeatable (default: every visible scene)")
+    ap_.add_argument("--out", help="write the full JSON result here")
+    op = sub.add_parser("opportunities", allow_abbrev=False,
+                        help="how much of the step each stage's native version takes: the most a replacement could gain")
+    op.add_argument("--scene", required=True)
+    op.add_argument("--worlds", type=int, nargs="+", default=[1])
+    op.add_argument("--out", help="write the full JSON result here")
     pr = sub.add_parser("profile", allow_abbrev=False, help="time each phase of the step, native and with a graph installed")
     pr.add_argument("--graph", help="graph file to install for the second column (omit for the native step only)")
     pr.add_argument("--scene", required=True)
@@ -75,6 +84,23 @@ def _dispatch(args) -> int:
     if args.command == "list":
         registry = load_registry(args.plugin)
         print(json.dumps(dict(scenes=load_scenes(args.scene_module, args.scene_dir).describe(), registry=registry.describe()), indent=2))
+        return 0
+    if args.command == "applicability":
+        from .opportunity import applicability, applicability_table
+        scenes = load_scenes(args.scene_module, args.scene_dir)
+        result = applicability(load_registry(args.plugin), scenes, args.scene or None)
+        if args.out:
+            with open(args.out, "w") as stream:
+                json.dump(result, stream, indent=1)
+        print(applicability_table(result))
+        return 0
+    if args.command == "opportunities":
+        from .opportunity import opportunities, opportunities_table
+        result = opportunities(load_scenes(args.scene_module, args.scene_dir).get(args.scene), tuple(args.worlds))
+        if args.out:
+            with open(args.out, "w") as stream:
+                json.dump(result, stream, indent=1)
+        print(opportunities_table(result))
         return 0
     if args.command == "profile":
         from .profile import profile_scene, table
