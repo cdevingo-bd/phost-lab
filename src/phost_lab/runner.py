@@ -7,6 +7,7 @@ relative to the noise floor, and the per-stage metrics each implementation emits
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import gc
 import os
@@ -20,6 +21,7 @@ import numpy as np
 
 import phost
 from phost import SwapClass
+from .driver import get_driver
 from .graph import GraphSpec
 from .metrics import accuracy_ratio
 from .scene import Scene
@@ -37,6 +39,7 @@ class RunConfig:
     frame_every: int = 0             # keep world 0's qpos every this many replayed steps, for playback (0: none)
     max_frames: int = 60
     calls: tuple[int, ...] = ()      # steps per call to time, e.g. (1, 5, 20); () skips the per-call curve
+    driver: str = "graph"            # how the host is stepped while timed (see driver.py): "graph", "eager", or a plugin's
 
     def __post_init__(self):
         object.__setattr__(self, "calls", tuple(int(n) for n in self.calls))
@@ -73,32 +76,27 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
     model_cpu = mujoco.MjModel.from_xml_string(xml)
     cpu = settled(model_cpu, xml, scene.settle_steps)
 
-    def capture(fn):
-        fn(); wp.synchronize()
-        with wp.ScopedCapture() as cap:
-            fn()
-        wp.synchronize()
-        return cap.graph
+    driver = get_driver(config.driver)
 
-    def step_ms(g):
+    def step_ms(advance):
         samples = []
         for _ in range(config.repeats):
             t = time.perf_counter()
             for _ in range(config.launches):
-                wp.capture_launch(g)
+                advance()
             wp.synchronize()
             samples.append(1e3 * (time.perf_counter() - t) / config.launches)
         return statistics.median(samples)
 
-    def call_curve(g):
-        """Median wall time of one call of n graph launches plus a sync, for each n in ``config.calls``."""
+    def call_curve(advance):
+        """Median wall time of one call of n steps plus a sync, for each n in ``config.calls``."""
         curve = {}
         for n in config.calls:
             samples = []
             for _ in range(config.repeats):
                 t = time.perf_counter()
                 for _ in range(n):
-                    wp.capture_launch(g)
+                    advance()
                 wp.synchronize()
                 samples.append(1e3 * (time.perf_counter() - t))
             curve[n] = statistics.median(samples)
@@ -111,7 +109,8 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
 
     result: dict[str, Any] = dict(
         graph=graph.to_dict(), scene=scene.id, scene_hidden=scene.hidden, stage_classes=stage_classes(graph, registry),
-        config=dict(worlds=list(config.worlds), steps=config.steps, **({"calls": list(config.calls)} if config.calls else {})),
+        config=dict(worlds=list(config.worlds), steps=config.steps, driver=config.driver,
+                    **({"calls": list(config.calls)} if config.calls else {})),
         meta=dict(date=datetime.datetime.now().isoformat(timespec="seconds"), mujoco=mujoco.__version__,
                   warp=wp.config.version, device=wp.get_device("cuda:0").name, nv=int(model_cpu.nv),
                   nefc_start=int(cpu.nefc), timestep=float(model_cpu.opt.timestep),
@@ -128,29 +127,27 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
                 session = None
                 if name == "graph" and graph.stages:
                     session = phost.Session(MJWarpHost(model, d, cpu_model=model_cpu), graph.selections(), registry)
-                    with session:
-                        g = capture(lambda: mjw.step(model, d))
-                else:
-                    g = capture(lambda: mjw.step(model, d))
-                reset(d, w)
-                timings[name] = step_ms(g)
-                if config.calls:
+                with session if session is not None else contextlib.nullcontext():      # installed for as long as it is stepped
+                    advance = driver.prepare(wp, lambda: mjw.step(model, d))
                     reset(d, w)
-                    curves[name] = call_curve(g)
-                reset(d, w)
-                if session is not None:
-                    session.reset_metrics()
-                for step in range(config.steps):
-                    wp.capture_launch(g)
-                    if name == "graph" and config.frame_every and step % config.frame_every == 0 \
-                            and len(frames) < config.max_frames:
-                        frames.append(d.qpos.numpy()[0].astype(np.float64).tolist())     # reading syncs the device
-                wp.synchronize()
-                finals[name] = d.qpos.numpy().astype(np.float64)
-                if name == "graph":
-                    stage_metrics = session.metrics() if session is not None else {}
-                    advisories = list(session.advisories) if session is not None else []
-                keep.append((d, g, session))
+                    timings[name] = step_ms(advance)
+                    if config.calls:
+                        reset(d, w)
+                        curves[name] = call_curve(advance)
+                    reset(d, w)
+                    if session is not None:
+                        session.reset_metrics()
+                    for step in range(config.steps):
+                        advance()
+                        if name == "graph" and config.frame_every and step % config.frame_every == 0 \
+                                and len(frames) < config.max_frames:
+                            frames.append(d.qpos.numpy()[0].astype(np.float64).tolist())     # reading syncs the device
+                    wp.synchronize()
+                    finals[name] = d.qpos.numpy().astype(np.float64)
+                    if name == "graph":
+                        stage_metrics = session.metrics() if session is not None else {}
+                        advisories = list(session.advisories) if session is not None else []
+                keep.append((d, advance, session))
             native_ms = (timings["native"] + timings["native2"]) / 2
             rms = lambda a, b: float(np.sqrt(np.mean((finals[a] - finals[b]) ** 2)))
             control, diff = rms("native", "native2"), rms("graph", "native")

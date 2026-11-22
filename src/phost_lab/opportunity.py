@@ -139,6 +139,62 @@ def opportunities(scene: Scene, worlds: tuple[int, ...] = (1,), launches: int = 
     return out
 
 
+def structure(scene: Scene) -> dict:
+    """The nonzero structure of each stage's system matrix on this scene, for every stage whose binding can say.
+
+    ``{"scene", "nv", "stages": {stage: {"applies", "reason", "structure"}}}`` where ``structure`` is
+    ``Sparsity.describe()`` (size, density, coupled rows, bandwidth before and after reordering, and the floating-point
+    operations a dense, a coupled-rows and a banded factorization would take), or None when the stage has no matrix here.
+    Nothing is timed: this says whether a structure-exploiting solve has something to exploit, before one is written.
+    """
+    host, model_cpu = _build(scene, 1, settle=False)
+    stages = {}
+    for name, binding in host.stages().items():
+        if binding.sparsity is None:
+            continue
+        reason = host.refusal(name)
+        pattern = binding.sparsity(host) if reason is None else None
+        stages[name] = dict(applies=reason is None, reason=reason, structure=pattern.describe() if pattern is not None else None)
+    return dict(scene=scene.id, nv=int(model_cpu.nv), integrator=host.facts().integrator, stages=stages)
+
+
+def structure_table(result: dict) -> str:
+    lines = [f"scene {result['scene']} (nv={result['nv']}, {result['integrator']} integrator)"]
+    if not result["stages"]:
+        return "\n".join(lines + ["no stage on this host reports a matrix structure"])
+    for name, cell in result["stages"].items():
+        if cell["structure"] is None:
+            lines.append(f"  {name}: not applicable here: {cell['reason']}")
+            continue
+        s = cell["structure"]
+        lines += [f"  {name}: {s['n']} x {s['n']}, {s['nnz']} entries ({100 * s['density']:.1f}% dense), "
+                  f"{s['coupled']} of {s['n']} rows coupled",
+                  f"    band: {s['bandwidth']} as the host orders it, {s['bandwidth_rcm']} after reverse Cuthill-McKee",
+                  f"    factorization work, in flops: dense {s['dense_flops']:.2e}, coupled rows only {s['coupled_flops']:.2e} "
+                  f"({100 * s['coupled_flops'] / s['dense_flops']:.1f}%), banded {s['banded_flops']:.2e} "
+                  f"({100 * s['banded_flops'] / s['dense_flops']:.1f}%)",
+                  "    flops are not time: whether a variant wins depends on how its kernel moves data (see profile)"]
+    return "\n".join(lines)
+
+
+REPORTS = ("applicability", "opportunities", "structure")
+
+
+def reports(kinds, scene: Scene, scenes: SceneRegistry, registry: phost.Registry, worlds=(1,)) -> dict:
+    """Several of the reports for one scene, by name, in one go (they share a process, so a tool pays for the GPU once)."""
+    out: dict[str, Any] = {}
+    for kind in kinds:
+        if kind == "opportunities":
+            out[kind] = opportunities(scene, tuple(worlds))
+        elif kind == "structure":
+            out[kind] = structure(scene)
+        elif kind == "applicability":
+            out[kind] = applicability(registry, scenes, [scene.id])
+        else:
+            raise phost.ContractError(f"no report {kind!r}; known {list(REPORTS)}")
+    return out
+
+
 def applicability_table(result: dict) -> str:
     """Stages by scenes, then why not for each refusal."""
     scene_ids = list(result["scenes"])

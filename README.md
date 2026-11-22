@@ -119,6 +119,45 @@ being faster than the host is not what it is for. A stage that does not apply to
 Here the effective solve is 8% of the step, so no replacement can give more than 1.09x; this is the calculation that
 `profile` below confirms for one replacement.
 
+## The structure of a stage's matrix
+
+```
+phost-lab sparsity --scene trampoline12:discrete
+```
+
+```
+scene trampoline12:discrete (nv=330, discrete integrator)
+  effective.solve: 330 x 330, 9678 entries (8.9% dense), 300 of 330 rows coupled
+    band: 65 as the host orders it, 59 after reverse Cuthill-McKee
+    factorization work, in flops: dense 1.20e+07, coupled rows only 9.00e+06 (75.1%), banded 1.15e+06 (9.6%)
+    flops are not time: whether a variant wins depends on how its kernel moves data (see profile)
+```
+
+For every stage whose binding can say what its system matrix looks like, the pattern of nonzeros and what a factorization
+that exploits it would cost in floating-point operations, compared with a dense one. It is read from the model, not
+timed, and answers whether a structure-exploiting solve has anything to exploit before one is written. Here 300 of 330 rows
+are coupled, so factoring only the coupled rows saves a quarter of the work, while a banded factorization after
+reordering needs a tenth. That is a count of operations: the replacement's kernel still has to be faster than the host's own
+iteration (see `profile`) for it to matter. An implementation gets the same pattern through the `sparsity` extension
+(phost's `docs/ADDING_A_STAGE.md`).
+
+## How the host is stepped
+
+```
+phost-lab run examples/effective_direct.json --scene trampoline12:discrete --driver eager
+```
+
+A run times and compares steps and does not care how one is launched, but the launch changes what a step costs. A `Driver`
+is that choice: `graph` (the default) captures the step once as a CUDA graph and replays it; `eager` runs the step from Python
+every time, so every kernel is launched from the host thread. Everything that advances the host (the per-step time, the
+`--steps-per-call` curve, the accuracy replay) goes through the driver's `advance()`, and the result records which one ran
+(`config.driver`). A new way of stepping, such as a step wrapped by another framework that adds its own per-call cost, is one
+class and `register_driver(...)` from a plugin's `register`; the runner does not change. The driver is separate from
+`--steps-per-call`: that varies how many steps a call makes, this varies how a step is made.
+
+The reports above run in a worker too: `run_isolated(..., report=dict(kinds=["opportunities", "structure"], worlds=[1]))`
+returns them as data, which is how phost-dash's Build screen shows them.
+
 ## Where the time goes
 
 ```

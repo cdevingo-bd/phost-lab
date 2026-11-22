@@ -168,3 +168,63 @@ def test_opportunities_give_each_stage_a_share_and_a_ceiling_only_where_a_swap_i
     assert discrete["launch_floor_ms"] > 0 and discrete["step_ms"] > discrete["launch_floor_ms"]
     text = opportunities_table(dict(scene="trampoline8:discrete", cells=[discrete]))
     assert "upper bound" in text and "effective.solve" in text and "x" in text
+
+
+def test_every_step_of_a_run_goes_through_the_driver():
+    """The runner times, replays and compares through ``advance`` and nothing else, so a new way of stepping is one class."""
+    from phost_lab import driver as drivers
+
+    class Counting(drivers.GraphDriver):
+        name, doc, advanced = "test-counting", "the graph driver, counting", 0
+
+        def prepare(self, wp, step):
+            advance = super().prepare(wp, step)
+
+            def counted():
+                Counting.advanced += 1
+                advance()
+            return counted
+
+    drivers.register_driver(Counting())
+    try:
+        out = run_graph(NATIVE, default_scenes().get("trampoline8:impact"), RunConfig(worlds=(1,), steps=5, launches=2, repeats=3,
+                                                                                    driver="test-counting"), None)
+        assert out["config"]["driver"] == "test-counting"
+        assert Counting.advanced == 3 * (2 * 3 + 5)          # native, graph, native2: timing samples plus the accuracy replay
+    finally:
+        drivers.DRIVERS.pop("test-counting")
+
+
+def test_the_eager_driver_runs_a_whole_comparison_and_the_choice_survives_the_worker_round_trip():
+    from phost_lab.isolate import run_isolated
+    out = run_isolated(NATIVE, "trampoline8:impact", RunConfig(worlds=(1,), steps=3, launches=1, repeats=3, driver="eager"),
+                       timeout=300)
+    cell, = out["cells"]
+    assert out["config"]["driver"] == "eager" and out["pass"]
+    assert cell["step_ms"] > 0 and 0.3 < cell["speedup"] < 3.0       # native against native, stepped from Python
+
+
+def test_the_structure_report_says_what_a_structure_exploiting_solve_could_save_on_the_flex_scene():
+    from phost_lab.opportunity import structure, structure_table
+    scenes = default_scenes()
+    flat = structure(scenes.get("trampoline8:impact"))
+    assert flat["stages"]["effective.solve"]["structure"] is None and "discrete integrator" in flat["stages"]["effective.solve"]["reason"]
+    s = structure(scenes.get("trampoline12:discrete"))["stages"]["effective.solve"]["structure"]
+    assert s["n"] == 330 and s["coupled"] == 300 and s["density"] < 0.1
+    assert s["bandwidth_rcm"] <= s["bandwidth"] < s["n"]
+    assert s["banded_flops"] < 0.2 * s["dense_flops"] and s["coupled_flops"] > 0.5 * s["dense_flops"]     # coupled rows barely help here
+    text = structure_table(dict(scene="trampoline12:discrete", nv=330, integrator="discrete", stages=dict(
+        {"effective.solve": dict(applies=True, reason=None, structure=s)})))
+    assert "reverse Cuthill-McKee" in text and "flops are not time" in text
+
+
+def test_the_reports_run_in_a_worker_and_come_back_as_data():
+    from phost_lab.isolate import run_isolated
+    out = run_isolated(NATIVE, "trampoline8:discrete", RunConfig(), timeout=300, plugins=[],
+                       report=dict(kinds=["opportunities", "structure", "applicability"], worlds=[1]))
+    assert "error" not in out, out
+    assert out["opportunities"]["cells"][0]["stages"]["effective.solve"]["share"] > 0
+    assert out["structure"]["stages"]["effective.solve"]["structure"]["n"] > 0
+    assert out["applicability"]["scenes"]["trampoline8:discrete"]["stages"]["effective.solve"]["applies"]
+    bad = run_isolated(NATIVE, "trampoline8:discrete", RunConfig(), timeout=300, report=dict(kinds=["nope"]))
+    assert "no report 'nope'" in bad["error"]

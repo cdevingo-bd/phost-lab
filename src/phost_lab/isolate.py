@@ -20,16 +20,19 @@ def run_isolated(graph: GraphSpec, scene: str, config: RunConfig, *, timeout: fl
                  plugins: Sequence[str] = (), scene_modules: Sequence[str] = (), scene_dirs: Sequence[str] = (),
                  python: str | None = None, on_progress: Callable[[dict], None] | None = None,
                  cancel: threading.Event | None = None, env: Mapping[str, str] | None = None,
-                 live: Mapping[str, int] | None = None) -> dict:
+                 live: Mapping[str, int] | None = None, report: Mapping | None = None) -> dict:
     """Returns the runner's result dict, or ``{"error": ..., "pass": False}`` if the worker failed.
 
     ``on_progress`` receives the worker's progress events as they happen. Setting ``cancel`` kills the worker.
     ``env`` adds environment variables for the worker alone. ``live`` (``steps``, ``every``, ``max_frames``) makes it a
-    live pass (see ``live.py``) instead of a timed run.
+    live pass (see ``live.py``) instead of a timed run. ``report`` (``kinds``: names from ``opportunity.REPORTS``, and
+    ``worlds``) makes it the analysis reports of ``opportunity.py`` instead; the graph and config are then not used, and
+    the result is ``{kind: report}``.
     """
     request = dict(graph=graph.to_dict(), scene=scene, plugins=list(plugins), scene_modules=list(scene_modules),
                    scene_dirs=list(scene_dirs), config=dataclasses.asdict(config), progress=on_progress is not None,
-                   mode="live" if live is not None else "run", live=dict(live or {}))
+                   mode="report" if report is not None else "live" if live is not None else "run", live=dict(live or {}),
+                   report=dict(report or {}))
     request["config"]["worlds"] = list(config.worlds)
     request["config"]["calls"] = list(config.calls)
     # the worker sees the same modules as this process, so it runs the code that was asked for
