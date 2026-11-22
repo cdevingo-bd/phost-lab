@@ -1,4 +1,4 @@
-"""``phost-lab``: list, validate and run graphs."""
+"""``phost-lab``: list, validate, run and profile graphs."""
 
 from __future__ import annotations
 
@@ -47,6 +47,11 @@ def main(argv=None) -> int:
     r.add_argument("--out", help="write the full JSON result here")
     r.add_argument("--timeout", type=float, default=900.0)
     r.add_argument("--no-isolate", action="store_true", help="run in this process (faster, no crash isolation)")
+    pr = sub.add_parser("profile", allow_abbrev=False, help="time each phase of the step, native and with a graph installed")
+    pr.add_argument("--graph", help="graph file to install for the second column (omit for the native step only)")
+    pr.add_argument("--scene", required=True)
+    pr.add_argument("--worlds", type=int, nargs="+", default=[1])
+    pr.add_argument("--out", help="write the full JSON result here")
     args = ap.parse_args(argv)
 
     try:
@@ -60,6 +65,16 @@ def _dispatch(args) -> int:
     if args.command == "list":
         registry = load_registry(args.plugin)
         print(json.dumps(dict(scenes=load_scenes(args.scene_module, args.scene_dir).describe(), registry=registry.describe()), indent=2))
+        return 0
+    if args.command == "profile":
+        from .profile import profile_scene, table
+        graph = _load_graph(args.graph) if args.graph else GraphSpec("native")
+        registry = load_registry(list(graph.plugins) + args.plugin)
+        result = profile_scene(graph, load_scenes(args.scene_module, args.scene_dir).get(args.scene), tuple(args.worlds), registry)
+        if args.out:
+            with open(args.out, "w") as stream:
+                json.dump(result, stream, indent=1)
+        print(table(result))
         return 0
     graph = _load_graph(args.graph)
     registry = load_registry(list(graph.plugins) + args.plugin)

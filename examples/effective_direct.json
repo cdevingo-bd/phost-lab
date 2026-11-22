@@ -1,0 +1,3 @@
+{"version": 1, "name": "effective-direct", "host": "mjwarp", "plugins": ["phost_coupledchol.phost_impl"],
+ "note": "direct solve of the discrete step's effective metric; a measured slowdown on trampoline12:discrete, kept as the example of a swap that loses",
+ "stages": {"effective.solve": {"impl": "effective.solve/coupled", "params": {}}}}

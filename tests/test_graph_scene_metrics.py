@@ -57,6 +57,18 @@ def test_default_scenes_and_lookup():
         scenes.get("nope")
 
 
+def test_discrete_trampolines_are_the_euler_ones_with_the_discrete_integrator():
+    mujoco = pytest.importorskip("mujoco")
+    scenes = default_scenes()
+    assert {"trampoline8:discrete", "trampoline12:discrete", "trampoline14:discrete"} <= set(scenes.ids())
+    discrete = mujoco.MjModel.from_xml_string(scenes.get("trampoline12:discrete").xml())
+    euler = mujoco.MjModel.from_xml_string(scenes.get("trampoline12:impact").xml())
+    assert euler.opt.integrator == mujoco.mjtIntegrator.mjINT_EULER
+    assert discrete.opt.integrator == mujoco.mjtIntegrator.mjINT_DISCRETE
+    assert discrete.nv == euler.nv == 330                      # the description says nv=330
+    assert "discrete" in scenes.get("trampoline12:discrete").tags
+
+
 def test_duplicate_scene_is_rejected():
     reg = SceneRegistry()
     scene = default_scenes().get("trampoline8:impact")

@@ -86,3 +86,19 @@ def test_live_frames_stop_at_the_cap(registry):
                    registry, on_progress=events.append)
     assert out["frames"] == 3 and sum(e["event"] == "live" for e in events) == 3
     assert out["steps"] == 6                                  # it stopped stepping at the last frame it could show
+
+
+def test_profile_times_every_phase_and_finds_the_effective_solve_only_under_the_discrete_integrator():
+    from phost_lab.profile import PHASES, profile_scene, table
+    scenes = default_scenes()
+    flat = profile_scene(NATIVE, scenes.get("trampoline8:impact"), (1,), launches=2, repeats=3)
+    discrete = profile_scene(NATIVE, scenes.get("trampoline8:discrete"), (1,), launches=2, repeats=3)
+    for result, expected in ((flat, "euler"), (discrete, "discrete")):
+        assert result["integrator"] == expected
+        entry = result["cells"][0]["variants"]["native"]
+        assert list(entry["phases"]) == list(PHASES) and all(v >= 0 for v in entry["phases"].values())
+        assert entry["full_ms"] > 0 and entry["phase_sum_ms"] > 0
+    assert flat["cells"][0]["variants"]["native"]["effective_ms"] is None
+    assert discrete["cells"][0]["variants"]["native"]["effective_ms"] > 0
+    text = table(discrete)
+    assert "of which effective solve" in text and "trampoline8:discrete" in text and "native ms" in text

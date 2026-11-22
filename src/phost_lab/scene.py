@@ -14,15 +14,17 @@ from .tank import tank_xml
 BALLS = [(-0.12, -0.08, 0.95), (0.10, 0.10, 1.25), (0.02, -0.17, 1.55), (-0.14, 0.14, 1.85), (0.16, -0.02, 2.15)]
 
 
-def trampoline_xml(n: int = 12) -> str:
-    """Balls dropped onto an n x n membrane pinned at its border (Euler, Newton). nv = 3 (n-2)^2 + 30."""
+def trampoline_xml(n: int = 12, integrator: str = "Euler") -> str:
+    """Balls dropped onto an n x n membrane pinned at its border (Newton). nv = 3 (n-2)^2 + 30. With the
+    ``discrete`` integrator MuJoCo Warp solves the membrane's effective metric every step, which is the one place the
+    ``effective.solve`` stage applies."""
     span, k = 0.77, n - 1
     spacing, rim = span / (n - 1), span / 2 + 0.03
     bodies = "\n".join(
         f'    <body name="ball_{i}" pos="{x} {y} {z}"><joint type="free" damping="0.5"/>'
         f'<geom type="sphere" size="0.05" mass="0.25"/></body>' for i, (x, y, z) in enumerate(BALLS))
     return f"""<mujoco model="trampoline_{n}">
-  <option timestep="0.0005" integrator="Euler"/>
+  <option timestep="0.0005" integrator="{integrator}"/>
   <worldbody>
     <geom name="floor" type="plane" size="3 3 .1" pos="0 0 0"/>
     <geom name="rim_n" type="box" size="{rim+.015} .03 .02" pos="0 {rim} .45" contype="0" conaffinity="0"/>
@@ -123,6 +125,11 @@ def default_scenes() -> SceneRegistry:
                       f"membrane {n}x{n}, nv={nv}, 1.2 s in: balls hitting the sheet", ("flex", "contact")))
         reg.add(Scene(f"trampoline{n}:rest", lambda n=n: trampoline_xml(n), 10000,
                       f"membrane {n}x{n}, nv={nv}, 5 s in: balls resting on the sheet", ("flex", "contact")))
+    for n in (8, 12, 14):
+        nv = 3 * (n - 2) ** 2 + 30
+        reg.add(Scene(f"trampoline{n}:discrete", lambda n=n: trampoline_xml(n, "discrete"), 2400,
+                      f"membrane {n}x{n}, nv={nv}, 1.2 s in, discrete integrator: the host solves the membrane's effective "
+                      f"metric each step", ("flex", "contact", "discrete")))
     reg.add(Scene("tank:boat", lambda: tank_xml(), 500,
                   "a glass tank of water (150 frictionless spheres: a stand-in, MuJoCo has no fluid solver) shuttling "
                   "side to side, with a boat on it, a cloth sail on the mast and three crates sliding about the deck; nv=622",
