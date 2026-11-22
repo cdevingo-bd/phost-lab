@@ -188,3 +188,13 @@ def test_the_command_line_does_not_abbreviate_options(plugin, tmp_path):
     for argv in (["run", str(graph), "--scene", "x", "--no-iso"], ["--scene", "list"], ["--scene-d", "x", "list"]):
         with pytest.raises(SystemExit):
             main(argv)
+
+
+def test_env_reaches_the_worker_and_only_the_worker(tmp_path, monkeypatch):
+    monkeypatch.delenv("PHOST_TEST_VALUE", raising=False)
+    seen = tmp_path / "seen.txt"
+    body = f'cat >/dev/null\necho "$PHOST_TEST_VALUE" > {seen}\n{result()}'
+    run_isolated(GraphSpec("g"), "s", CONFIG, python=script(tmp_path, body), env={"PHOST_TEST_VALUE": "from-the-caller"})
+    assert seen.read_text().strip() == "from-the-caller"
+    import os
+    assert "PHOST_TEST_VALUE" not in os.environ

@@ -9,7 +9,7 @@ import signal
 import subprocess
 import sys
 import threading
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .graph import GraphSpec
 from .runner import RunConfig
@@ -19,18 +19,22 @@ from .worker import PREFIX, PROGRESS
 def run_isolated(graph: GraphSpec, scene: str, config: RunConfig, *, timeout: float = 900.0,
                  plugins: Sequence[str] = (), scene_modules: Sequence[str] = (), scene_dirs: Sequence[str] = (),
                  python: str | None = None, on_progress: Callable[[dict], None] | None = None,
-                 cancel: threading.Event | None = None) -> dict:
+                 cancel: threading.Event | None = None, env: Mapping[str, str] | None = None,
+                 live: Mapping[str, int] | None = None) -> dict:
     """Returns the runner's result dict, or ``{"error": ..., "pass": False}`` if the worker failed.
 
     ``on_progress`` receives the worker's progress events as they happen. Setting ``cancel`` kills the worker.
+    ``env`` adds environment variables for the worker alone. ``live`` (``steps``, ``every``, ``max_frames``) makes it a
+    live pass (see ``live.py``) instead of a timed run.
     """
     request = dict(graph=graph.to_dict(), scene=scene, plugins=list(plugins), scene_modules=list(scene_modules),
-                   scene_dirs=list(scene_dirs), config=dataclasses.asdict(config), progress=on_progress is not None)
+                   scene_dirs=list(scene_dirs), config=dataclasses.asdict(config), progress=on_progress is not None,
+                   mode="live" if live is not None else "run", live=dict(live or {}))
     request["config"]["worlds"] = list(config.worlds)
     # the worker sees the same modules as this process, so it runs the code that was asked for
-    env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
+    worker_env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p), **(env or {}))
     process = subprocess.Popen([python or sys.executable, "-m", "phost_lab.worker"], stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=worker_env,
                                start_new_session=True)
     stopped: list[str] = []
     done = threading.Event()

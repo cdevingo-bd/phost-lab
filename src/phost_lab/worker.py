@@ -26,7 +26,11 @@ def main() -> int:
         scene = load_scenes(request.get("scene_modules", ()), request.get("scene_dirs", ())).get(request["scene"])
         config = RunConfig(**{**request.get("config", {}), "worlds": tuple(request["config"]["worlds"])})
         progress = (lambda event: print(PROGRESS + json.dumps(event), flush=True)) if request.get("progress") else None
-        out = run_graph(graph, scene, config, registry, on_progress=progress)
+        if request.get("mode") == "live":
+            from .live import LiveConfig, run_live
+            out = run_live(graph, scene, LiveConfig(**request.get("live", {})), registry, on_progress=progress)
+        else:
+            out = run_graph(graph, scene, config, registry, on_progress=progress)
         print(PREFIX + json.dumps(out), flush=True)
         return 0
     except BaseException as error:                       # report, never hide: the parent decides

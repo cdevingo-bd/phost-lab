@@ -9,6 +9,8 @@ from typing import Callable
 
 from phost import ContractError
 
+from .tank import tank_xml
+
 BALLS = [(-0.12, -0.08, 0.95), (0.10, 0.10, 1.25), (0.02, -0.17, 1.55), (-0.14, 0.14, 1.85), (0.16, -0.02, 2.15)]
 
 
@@ -60,6 +62,11 @@ class Scene:
     description: str = ""
     tags: tuple[str, ...] = ()
     hidden: bool = False                     # a held-out scene: runnable, but its model and description are never shown
+    contacts: int | None = None              # MJWarp contact buffer per world; None keeps the lab's original 16 * worlds + 64
+    constraints: int = 2048                  # MJWarp constraint rows per world
+
+    def nconmax(self, worlds: int) -> int:
+        return 16 * worlds + 64 if self.contacts is None else self.contacts
 
     def public(self) -> dict:
         """What a tool may show about this scene. A hidden scene shows its id and nothing about what is in it."""
@@ -98,12 +105,13 @@ class SceneRegistry:
         for path in sorted(Path(directory).glob("*.xml")):
             meta_path = path.with_suffix(".json")
             meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
-            unknown = set(meta) - {"settle_steps", "description", "tags", "hidden"}
+            unknown = set(meta) - {"settle_steps", "description", "tags", "hidden", "contacts", "constraints"}
             if unknown:
                 raise ContractError(f"{meta_path}: unknown keys {sorted(unknown)}")
             added.append(self.add(Scene(path.stem, lambda p=path: p.read_text(), int(meta.get("settle_steps", 0)),
                                         meta.get("description", ""), tuple(meta.get("tags", ())),
-                                        bool(meta.get("hidden", False)))).id)
+                                        bool(meta.get("hidden", False)), int(meta["contacts"]) if "contacts" in meta else None,
+                                        int(meta.get("constraints", 2048)))).id)
         return added
 
 
@@ -115,6 +123,10 @@ def default_scenes() -> SceneRegistry:
                       f"membrane {n}x{n}, nv={nv}, 1.2 s in: balls hitting the sheet", ("flex", "contact")))
         reg.add(Scene(f"trampoline{n}:rest", lambda n=n: trampoline_xml(n), 10000,
                       f"membrane {n}x{n}, nv={nv}, 5 s in: balls resting on the sheet", ("flex", "contact")))
+    reg.add(Scene("tank:boat", lambda: tank_xml(), 500,
+                  "a glass tank of water (150 frictionless spheres: a stand-in, MuJoCo has no fluid solver) shuttling "
+                  "side to side, with a boat on it, a cloth sail on the mast and three crates sliding about the deck; nv=622",
+                  ("flex", "contact", "water"), contacts=1500, constraints=3000))
     reg.add(Scene("arm7:swing", lambda: arm_xml(7), 0,
                   "7-link hinge chain with a motor per joint, released horizontal; nv=7, nu=7", ("actuated",)))
     return reg

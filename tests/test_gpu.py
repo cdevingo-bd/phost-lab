@@ -59,3 +59,30 @@ def test_the_real_worker_streams_progress_before_the_result(tmp_path):
     out = run_isolated(NATIVE, "held", FAST, scene_dirs=[str(tmp_path)], on_progress=events.append, timeout=300)
     assert [e["event"] for e in events] == ["start", "cell"]
     assert out["pass"] and out["scene"] == "held" and out["scene_hidden"] is True
+
+
+def test_a_live_pass_streams_a_layout_then_frames_of_native_and_graph(registry):
+    import math
+    from phost_lab.live import LiveConfig, run_live
+    events = []
+    out = run_live(NATIVE, default_scenes().get("trampoline8:impact"), LiveConfig(steps=12, every=3), registry,
+                   on_progress=events.append)
+    assert [e["event"] for e in events] == ["layout", "live", "live", "live", "live"]
+    layout, frames = events[0], events[1:]
+    assert [f["step"] for f in frames] == [3, 6, 9, 12] and out["frames"] == 4 and out["steps"] == 12
+    assert len(layout["geoms"]) == out["meta"]["ngeom"] and layout["flexes"]
+    for frame in frames:
+        assert len(frame["native"]["x"]) == 3 * out["meta"]["ngeom"] == len(frame["graph"]["x"])
+        assert frame["finite"] is True and math.isfinite(frame["drift"]) and math.isfinite(frame["noise"])
+    # the graph is the native step again, so it can only differ by the device's own run-to-run noise
+    assert frames[-1]["native"]["x"] != frames[0]["native"]["x"] and out["drift"] < 1e-3
+    assert out["stage_metrics"] == {}
+
+
+def test_live_frames_stop_at_the_cap(registry):
+    from phost_lab.live import LiveConfig, run_live
+    events = []
+    out = run_live(NATIVE, default_scenes().get("trampoline8:impact"), LiveConfig(steps=20, every=2, max_frames=3),
+                   registry, on_progress=events.append)
+    assert out["frames"] == 3 and sum(e["event"] == "live" for e in events) == 3
+    assert out["steps"] == 6                                  # it stopped stepping at the last frame it could show

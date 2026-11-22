@@ -23,6 +23,7 @@ from phost import SwapClass
 from .graph import GraphSpec
 from .metrics import accuracy_ratio
 from .scene import Scene
+from .settle import settled
 
 
 @dataclass(frozen=True)
@@ -62,11 +63,9 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
 
     registry = registry or phost.default
     graph.validate(registry)
-    model_cpu = mujoco.MjModel.from_xml_string(scene.xml())
-    cpu = mujoco.MjData(model_cpu)
-    for _ in range(scene.settle_steps):
-        mujoco.mj_step(model_cpu, cpu)
-    mujoco.mj_forward(model_cpu, cpu)
+    xml = scene.xml()
+    model_cpu = mujoco.MjModel.from_xml_string(xml)
+    cpu = settled(model_cpu, xml, scene.settle_steps)
 
     def capture(fn):
         fn(); wp.synchronize()
@@ -105,7 +104,7 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
             others = other_gpu_processes()
             timings, finals, graphs, keep, frames = {}, {}, {}, [], []
             for name in ("native", "graph", "native2"):
-                d = mjw.put_data(model_cpu, cpu, nworld=w, nconmax=16 * w + 64, njmax=2048)
+                d = mjw.put_data(model_cpu, cpu, nworld=w, nconmax=scene.nconmax(w), njmax=scene.constraints)
                 session = None
                 if name == "graph" and graph.stages:
                     session = phost.Session(MJWarpHost(model, d, cpu_model=model_cpu), graph.selections(), registry)
