@@ -18,6 +18,7 @@ import numpy as np
 
 import phost
 
+from .engine import require_engine
 from .graph import GraphSpec
 from .scene import Scene
 from .settle import settled
@@ -71,6 +72,7 @@ def run_live(graph: GraphSpec, scene: Scene, config: LiveConfig = LiveConfig(), 
 
     if scene.hidden:
         raise phost.ContractError("a held-out scene is never drawn")
+    require_engine(scene, "mjwarp", "the live view", "MuJoCo geometry to draw")
     registry = registry or phost.default
     graph.validate(registry)
     xml = scene.xml()

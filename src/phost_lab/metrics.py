@@ -10,13 +10,14 @@ from phost import MetricSpec
 NOISE_FLOOR = 1e-12
 
 BUILTIN = (
-    MetricSpec("step_ms", "ms", "lower", "timing", "median graph-replay time of one mjw.step"),
+    MetricSpec("step_ms", "ms", "lower", "timing", "median time of one step, as the driver launches it (a graph replay by default)"),
     MetricSpec("speedup", "x", "higher", "gauge", "native step_ms divided by this graph's step_ms"),
     MetricSpec("native_spread", "1", "lower", "gauge", "relative difference between the two native runs (timing noise)"),
-    MetricSpec("rms_dqpos", "rad|m", "lower", "gauge", "RMS qpos difference to native after the run"),
-    MetricSpec("control_rms_dqpos", "rad|m", "lower", "gauge", "RMS qpos difference native vs native (the noise floor)"),
+    MetricSpec("rms_dqpos", "rad|m", "lower", "gauge", "RMS state difference to native after the run"),
+    MetricSpec("control_rms_dqpos", "rad|m", "lower", "gauge", "RMS state difference native vs native (the noise floor)"),
     MetricSpec("accuracy_ratio", "1", "lower", "gauge",
-               "rms_dqpos / control_rms_dqpos; null when the control is at rounding-noise level"),
+               "rms_dqpos / control_rms_dqpos; null when the control is at rounding-noise level. An engine whose native "
+               "steps repeat exactly is measured against a rounding floor instead (cell.accuracy_basis says so)"),
 )
 
 

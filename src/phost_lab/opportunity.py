@@ -9,7 +9,8 @@ replacement could gain. A stage's binding says how to run the host's own version
 as its own CUDA graph and compares it with the whole step. For a stage whose native version cannot run alone, the binding
 names the larger phase that contains it and the figure is an upper bound.
 
-Both are generic over stages: a stage added to the host appears in both without any change here.
+Both are generic over stages and over engines: a stage added to a host appears in both without any change here, and a
+scene on another engine (``Scene.engine``) is read through that engine.
 """
 
 from __future__ import annotations
@@ -18,25 +19,15 @@ from typing import Any
 
 import phost
 
-from .profile import _capture, _replay_ms
+from .engine import engine_for
 from .scene import Scene, SceneRegistry
-from .settle import settled
 
 
 def _build(scene: Scene, worlds: int, settle: bool):
-    """A MuJoCo Warp host on ``scene`` (settled to its start state when ``settle``; applicability needs no state)."""
-    import mujoco
-    import mujoco_warp as mjw
-    import warp as wp
-    from phost.hosts.mjwarp import MJWarpHost
-
-    xml = scene.xml()
-    model_cpu = mujoco.MjModel.from_xml_string(xml)
-    cpu = settled(model_cpu, xml, scene.settle_steps) if settle else mujoco.MjData(model_cpu)
-    with wp.ScopedDevice("cuda:0"):
-        model = mjw.put_model(model_cpu)
-        data = mjw.put_data(model_cpu, cpu, nworld=worlds, nconmax=scene.nconmax(worlds), njmax=scene.constraints)
-    return MJWarpHost(model, data, cpu_model=model_cpu), model_cpu
+    """A host for ``scene`` on its engine, and the engine's facts about the loaded model (``nv``, ...). The scene is settled
+    to its start state when ``settle``; applicability needs no state. The device scope is not held open afterwards."""
+    with engine_for(scene).load(scene, settle=settle) as loaded:
+        return loaded.instance(worlds).host, dict(loaded.meta)
 
 
 def applicability(registry: phost.Registry, scenes: SceneRegistry, scene_ids: list[str] | None = None) -> dict:
@@ -48,7 +39,7 @@ def applicability(registry: phost.Registry, scenes: SceneRegistry, scene_ids: li
     """
     out: dict[str, Any] = dict(scenes={})
     for scene_id in scene_ids or [s["id"] for s in scenes.describe() if not s["hidden"]]:
-        host, model_cpu = _build(scenes.get(scene_id), 1, settle=False)
+        host, meta = _build(scenes.get(scene_id), 1, settle=False)
         facts = host.facts()
         stages = {}
         for name in host.stages():
@@ -58,7 +49,7 @@ def applicability(registry: phost.Registry, scenes: SceneRegistry, scene_ids: li
                 if impl.kind.value != "native":
                     impls[impl.id] = impl.applicable(facts) if impl.applicable else None
             stages[name] = dict(applies=reason is None, reason=reason, impls=impls)
-        out["scenes"][scene_id] = dict(nv=int(model_cpu.nv), integrator=facts.integrator, stages=stages)
+        out["scenes"][scene_id] = dict(nv=int(meta["nv"]), integrator=facts.integrator, stages=stages)
         del host
     return out
 
@@ -83,40 +74,31 @@ def scene_for(stage: str, scenes: SceneRegistry, registry: phost.Registry | None
     return None
 
 
-def _launch_floor_ms(wp, launches: int, repeats: int) -> float:
-    """What replaying a graph of one trivial kernel costs: the fixed price of timing anything as its own graph."""
-    from ._floor import touch
-
-    x = wp.zeros(1, dtype=float)
-    return _replay_ms(wp, _capture(wp, lambda: wp.launch(touch, dim=1, inputs=[x])), launches, repeats)
-
-
 def opportunities(scene: Scene, worlds: tuple[int, ...] = (1,), launches: int = 10, repeats: int = 9) -> dict:
-    """For each world count: the whole step, the graph-launch floor, and for each stage its native time, share of the step
+    """For each world count: the whole step, the launch floor, and for each stage its native time, share of the step
     and speedup ceiling.
 
     ``ceiling`` is 1 / (1 - share): what an infinitely fast replacement would give. It is reported only for stages whose
     swap class is a speed swap (exact, approximate); for a stage that changes the physics or only observes, the share says what
     the call it attaches to costs. A stage with ``enclosing`` set could not be timed alone and the share is an upper bound.
+    A stage whose binding declares no native timing (every stage of a host that has none) is listed without a figure.
     """
-    import mujoco_warp as mjw
-    import warp as wp
-
     out: dict[str, Any] = dict(scene=scene.id, cells=[])
-    with wp.ScopedDevice("cuda:0"):
-        floor = _launch_floor_ms(wp, launches, repeats)
+    with engine_for(scene).load(scene) as loaded:
+        device = loaded.device
+        floor = device.floor_ms(launches, repeats)
         for w in worlds:
-            step_host, model_cpu = _build(scene, w, settle=True)
-            m, d = step_host.model, step_host.data
+            step_instance = loaded.instance(w)
             for _ in range(3):
-                mjw.step(m, d)
-            wp.synchronize()
-            step_ms = _replay_ms(wp, _capture(wp, lambda: mjw.step(m, d)), launches, repeats)
+                step_instance.step()
+            device.synchronize()
+            step_ms = device.replay_ms(step_instance.step, launches, repeats)
             # the stages are timed on separate data: replaying single functions leaves it in a state a step does not start from
-            host, _ = _build(scene, w, settle=True)
+            instance = loaded.instance(w)
             for _ in range(3):
-                mjw.step(host.model, host.data)
-            wp.synchronize()
+                instance.step()
+            device.synchronize()
+            host = instance.host
             facts = host.facts()
             stages = {}
             for name, binding in host.stages().items():
@@ -126,16 +108,16 @@ def opportunities(scene: Scene, worlds: tuple[int, ...] = (1,), launches: int = 
                 timing = binding.native_timing
                 run = timing.run(host) if timing is not None and refusal is None else None
                 if run is not None:
-                    raw = _replay_ms(wp, _capture(wp, run), launches, repeats)
+                    raw = device.replay_ms(run, launches, repeats)
                     ms = max(raw - floor, 0.0)
                     share = min(ms / step_ms, 1.0)
                     speed_swap = binding.contract.swap_class.value in ("exact", "approximate")
                     entry.update(native_ms=ms, share=share, enclosing=timing.enclosing or None,
                                  ceiling=(1.0 / (1.0 - share) if speed_swap and not timing.enclosing and share < 1.0 else None))
                 stages[name] = entry
-            out["cells"].append(dict(worlds=w, nv=int(model_cpu.nv), integrator=facts.integrator, step_ms=step_ms,
+            out["cells"].append(dict(worlds=w, nv=int(loaded.meta["nv"]), integrator=facts.integrator, step_ms=step_ms,
                                      launch_floor_ms=floor, stages=stages))
-            del step_host, host
+            del step_instance, instance, host
     return out
 
 
@@ -147,7 +129,7 @@ def structure(scene: Scene) -> dict:
     operations a dense, a coupled-rows and a banded factorization would take), or None when the stage has no matrix here.
     Nothing is timed: this says whether a structure-exploiting solve has something to exploit, before one is written.
     """
-    host, model_cpu = _build(scene, 1, settle=False)
+    host, meta = _build(scene, 1, settle=False)
     stages = {}
     for name, binding in host.stages().items():
         if binding.sparsity is None:
@@ -155,7 +137,7 @@ def structure(scene: Scene) -> dict:
         reason = host.refusal(name)
         pattern = binding.sparsity(host) if reason is None else None
         stages[name] = dict(applies=reason is None, reason=reason, structure=pattern.describe() if pattern is not None else None)
-    return dict(scene=scene.id, nv=int(model_cpu.nv), integrator=host.facts().integrator, stages=stages)
+    return dict(scene=scene.id, nv=int(meta["nv"]), integrator=host.facts().integrator, stages=stages)
 
 
 def structure_table(result: dict) -> str:

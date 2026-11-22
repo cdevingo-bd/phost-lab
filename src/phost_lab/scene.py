@@ -59,13 +59,18 @@ def arm_xml(links: int = 7) -> str:
 @dataclass(frozen=True)
 class Scene:
     id: str
-    xml: Callable[[], str]
-    settle_steps: int = 0                    # CPU MuJoCo steps from the model's initial state
+    xml: Callable[[], str]                   # the scene text the engine reads: MJCF for mjwarp, JSON for chain
+    settle_steps: int = 0                    # steps of the engine's own CPU path from the model's initial state
     description: str = ""
     tags: tuple[str, ...] = ()
     hidden: bool = False                     # a held-out scene: runnable, but its model and description are never shown
     contacts: int | None = None              # MJWarp contact buffer per world; None keeps the lab's original 16 * worlds + 64
     constraints: int = 2048                  # MJWarp constraint rows per world
+    engine: str = "mjwarp"                   # which simulator runs it (see ``engine.py``); a graph's host must match
+
+    def text(self) -> str:
+        """The scene as its engine reads it."""
+        return self.xml()
 
     def nconmax(self, worlds: int) -> int:
         return 16 * worlds + 64 if self.contacts is None else self.contacts
@@ -75,7 +80,7 @@ class Scene:
         if self.hidden:
             return dict(id=self.id, hidden=True, description="", settle_steps=0, tags=[])
         return dict(id=self.id, hidden=False, description=self.description, settle_steps=self.settle_steps,
-                    tags=list(self.tags))
+                    tags=list(self.tags), engine=self.engine)
 
 
 class SceneRegistry:
@@ -102,22 +107,24 @@ class SceneRegistry:
 
     def add_directory(self, directory: str | Path) -> list[str]:
         """Register every ``<id>.xml`` in ``directory``. An optional ``<id>.json`` beside it may set ``settle_steps``,
-        ``description``, ``tags`` and ``hidden``. This is how a held-out set lives outside any repository."""
+        ``description``, ``tags``, ``hidden`` and ``engine``. This is how a held-out set lives outside any repository."""
         added = []
         for path in sorted(Path(directory).glob("*.xml")):
             meta_path = path.with_suffix(".json")
             meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
-            unknown = set(meta) - {"settle_steps", "description", "tags", "hidden", "contacts", "constraints"}
+            unknown = set(meta) - {"settle_steps", "description", "tags", "hidden", "contacts", "constraints", "engine"}
             if unknown:
                 raise ContractError(f"{meta_path}: unknown keys {sorted(unknown)}")
             added.append(self.add(Scene(path.stem, lambda p=path: p.read_text(), int(meta.get("settle_steps", 0)),
                                         meta.get("description", ""), tuple(meta.get("tags", ())),
                                         bool(meta.get("hidden", False)), int(meta["contacts"]) if "contacts" in meta else None,
-                                        int(meta.get("constraints", 2048)))).id)
+                                        int(meta.get("constraints", 2048)), meta.get("engine", "mjwarp"))).id)
         return added
 
 
 def default_scenes() -> SceneRegistry:
+    from .engines.chain import scenes as chain_scenes
+
     reg = SceneRegistry()
     for n in (8, 12, 14):
         nv = 3 * (n - 2) ** 2 + 30
@@ -136,4 +143,5 @@ def default_scenes() -> SceneRegistry:
                   ("flex", "contact", "water"), contacts=1500, constraints=3000))
     reg.add(Scene("arm7:swing", lambda: arm_xml(7), 0,
                   "7-link hinge chain with a motor per joint, released horizontal; nv=7, nu=7", ("actuated",)))
+    chain_scenes(reg)
     return reg

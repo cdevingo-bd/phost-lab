@@ -105,6 +105,9 @@ def profile_scene(graph: GraphSpec, scene: Scene, worlds: tuple[int, ...] = (1,)
     discrete integrator, ``effective_ms`` (the effective solve alone, inside ``velocity+actuation+accel``). The
     ``integrate`` phase is replayed with the state restored after it, and the cost of that restore is subtracted.
     """
+    from .engine import require_engine
+
+    require_engine(scene, "mjwarp", "the phase profile", "the phases of mjw.step")
     import mujoco
     import mujoco_warp as mjw
     import warp as wp

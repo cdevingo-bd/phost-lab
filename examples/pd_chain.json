@@ -1,0 +1,17 @@
+{
+ "version": 1,
+ "name": "pd-chain",
+ "host": "chain",
+ "plugins": [],
+ "note": "model-changing: a PD controller on the driven particles of a spring-mass chain; run on chain32:pluck (CPU, no GPU needed)",
+ "stages": {
+  "control.law": {
+   "impl": "control.law/pd",
+   "params": {
+    "kp": 40.0,
+    "kd": 2.0,
+    "target": 0.5
+   }
+  }
+ }
+}

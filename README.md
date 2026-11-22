@@ -30,13 +30,15 @@ Run on an idle GPU: the result records how many other GPU processes were running
 | `examples/effective_direct.json` | `trampoline12:discrete` | a direct solve of the discrete step's effective metric: **0.57x**, a swap that loses (see below) |
 | `examples/probe_peak.json` | `trampoline12:impact` | an observer: no measurable cost, trajectory unchanged |
 | `examples/pd_arm.json` | `arm7:swing` | a controller (model changing) |
+| `examples/pd_chain.json` | `chain32:pluck` | the same controller on a NumPy simulator: no GPU, no MuJoCo |
 | `examples/spring_trampoline.json` | `trampoline12:impact` | a force law (model changing) |
 
 ## Scenes
 
 `trampoline8/12/14:impact|rest` (a flexible membrane with balls on it, nv 138 to 462), `trampoline8/12/14:discrete` (the
 same membrane under the discrete integrator, where the host solves an effective metric each step and the
-`effective.solve` stage applies), `arm7:swing`, and `tank:boat`:
+`effective.solve` stage applies), `arm7:swing`, `chain32:pluck` and `chain256:ringing` (a NumPy simulator, see
+[The simulator](#the-simulator)), and `tank:boat`:
 a glass tank that shuttles side to side with a boat in it, a cloth sail on the mast and three crates on the deck
 (nv=622). **The water in `tank:boat` is 150 frictionless spheres, not a fluid**: MuJoCo has no fluid solver, and the boat
 floats because spheres hold it up. It is a busy scene that mixes contact, a flexible body and free bodies. It is also
@@ -141,6 +143,44 @@ reordering needs a tenth. That is a count of operations: the replacement's kerne
 iteration (see `profile`) for it to matter. An implementation gets the same pattern through the `sparsity` extension
 (phost's `docs/ADDING_A_STAGE.md`).
 
+## The simulator
+
+A run needs a short list of things from a simulator, and none of them is MuJoCo: load a scene and settle it, make instances of
+it with some number of worlds, step one, reset it to the start, read its state, and say what device it runs on. An `Engine`
+(`phost_lab.engine`) provides them, and the runner, the reports and the drivers speak only that.
+
+```
+engine.load(scene)       -> Loaded     parse and settle on the CPU; entering it opens the device scope
+loaded.instance(worlds)  -> Instance   the data for that many worlds, and a phost.Host over it (instance.host)
+instance.step() / reset() / state() / frame()
+loaded.device                          synchronize, capture, how busy, the cost of launching nothing
+```
+
+Two engines ship. `mjwarp` is MuJoCo Warp on a CUDA device and is what every scene used until now. `chain` is a damped
+spring-mass chain stepped in NumPy (`phost.hosts.chain`): no GPU, no MuJoCo, its arrays called `x`, `v` and `a`, and an
+effective system that is a band of half-width 1. It offers the stages a chain has (passive force, control law, probe and the
+banded effective solve) and not the ones it has no use for (`body.wrench`, `newton.linear_solve`), and the same typed
+equations, implementations and checks run on it. It exists to show the boundary is not MuJoCo's.
+
+A scene names its engine (`Scene.engine`, default `mjwarp`) and a graph names the host its stages are bound to
+(`GraphSpec.host`); a graph with stages that does not match the scene's engine is refused before anything loads. Three
+things follow from an engine being a different simulator:
+
+* **The driver.** `graph` needs a device that can capture a step. On one that cannot, a run steps eagerly and says so
+  (`config.driver_requested`, `meta.driver_note`) rather than claim it replayed a graph.
+* **The noise floor.** MuJoCo Warp does not repeat exactly, so native against native is the yardstick for accuracy. A chain
+  does repeat exactly, so that yardstick is zero and a ratio to it says nothing; an engine that reports `repeatable` is
+  measured against a rounding floor instead (`cell.accuracy_basis`, `runner.ROUNDING_FLOOR`), and a wrong swap still fails.
+* **The tools.** `opportunities`, `sparsity` and `applicability` read a scene through its engine. `profile` (the phases of
+  `mjw.step`) and the live view (MuJoCo geometry) are tools for the `mjwarp` engine and say so on any other.
+
+```
+phost-lab run examples/pd_chain.json --scene chain32:pluck      # on the CPU: the graph's host is "chain"
+```
+
+A plugin adds an engine with `register_engine(...)` from its `register`; an engine over a framework that steps in JAX would
+give its device a `capture` that returns a jitted replay and leave the rest alone.
+
 ## How the host is stepped
 
 ```
@@ -148,7 +188,7 @@ phost-lab run examples/effective_direct.json --scene trampoline12:discrete --dri
 ```
 
 A run times and compares steps and does not care how one is launched, but the launch changes what a step costs. A `Driver`
-is that choice: `graph` (the default) captures the step once as a CUDA graph and replays it; `eager` runs the step from Python
+(handed the engine's device) is that choice: `graph` (the default) captures the step once as a CUDA graph and replays it; `eager` runs the step from Python
 every time, so every kernel is launched from the host thread. Everything that advances the host (the per-step time, the
 `--steps-per-call` curve, the accuracy replay) goes through the driver's `advance()`, and the result records which one ran
 (`config.driver`). A new way of stepping, such as a step wrapped by another framework that adds its own per-call cost, is one
