@@ -162,6 +162,15 @@ def test_only_model_changing_stages_make_a_graph_incomparable(full_registry):
     assert not comparable_to_native(graph_of("control.law", "control.law/pd"), full_registry)
 
 
+def test_stage_classes_name_how_each_stage_is_judged(full_registry):
+    from phost_lab.runner import stage_classes
+    mixed = GraphSpec("m", {STAGE: Node("newton.linear_solve/native"), "probe.state": Node("probe.state/peak"),
+                            "control.law": Node("control.law/pd")})
+    assert stage_classes(mixed, full_registry) == {STAGE: "exact", "probe.state": "observer",
+                                                   "control.law": "model_changing"}
+    assert stage_classes(GraphSpec("n"), full_registry) == {}
+
+
 def metrics_for(stage):
     return {stage: dict(calls=1)}
 

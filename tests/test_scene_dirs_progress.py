@@ -178,3 +178,4 @@ def test_a_timeout_after_progress_still_reports_a_timeout(tmp_path):
 def test_the_stderr_tail_is_kept_when_the_worker_dies(tmp_path):
     out = run_isolated(GraphSpec("g"), "s", CONFIG, python=script(tmp_path, "cat >/dev/null\necho oops >&2\nexit 7"))
     assert "code 7" in out["error"] and "oops" in out["stderr"]
+

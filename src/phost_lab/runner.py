@@ -91,7 +91,7 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
         d.time.zero_()
 
     result: dict[str, Any] = dict(
-        graph=graph.to_dict(), scene=scene.id, scene_hidden=scene.hidden,
+        graph=graph.to_dict(), scene=scene.id, scene_hidden=scene.hidden, stage_classes=stage_classes(graph, registry),
         config=dict(worlds=list(config.worlds), steps=config.steps),
         meta=dict(date=datetime.datetime.now().isoformat(timespec="seconds"), mujoco=mujoco.__version__,
                   warp=wp.config.version, device=wp.get_device("cuda:0").name, nv=int(model_cpu.nv),
@@ -148,6 +148,15 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
     result["comparable_to_native"] = comparable_to_native(graph, registry)
     result["pass"] = all(c["verdict"]["ok"] for c in result["cells"])
     return result
+
+
+def stage_classes(graph: GraphSpec, registry: phost.Registry) -> dict[str, str]:
+    """Stage name -> swap class value, so a result says how it must be judged without needing the registry."""
+    classes = {}
+    for stage, node in graph.stages.items():
+        impl = registry.impl(node.impl)
+        classes[stage] = registry.contract(stage, impl.stage_version).swap_class.value
+    return classes
 
 
 def comparable_to_native(graph: GraphSpec, registry: phost.Registry) -> bool:
