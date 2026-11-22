@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from phost import ContractError
@@ -57,6 +59,14 @@ class Scene:
     settle_steps: int = 0                    # CPU MuJoCo steps from the model's initial state
     description: str = ""
     tags: tuple[str, ...] = ()
+    hidden: bool = False                     # a held-out scene: runnable, but its model and description are never shown
+
+    def public(self) -> dict:
+        """What a tool may show about this scene. A hidden scene shows its id and nothing about what is in it."""
+        if self.hidden:
+            return dict(id=self.id, hidden=True, description="", settle_steps=0, tags=[])
+        return dict(id=self.id, hidden=False, description=self.description, settle_steps=self.settle_steps,
+                    tags=list(self.tags))
 
 
 class SceneRegistry:
@@ -79,8 +89,22 @@ class SceneRegistry:
         return sorted(self._scenes)
 
     def describe(self) -> list[dict]:
-        return [dict(id=s.id, description=s.description, settle_steps=s.settle_steps, tags=list(s.tags))
-                for s in self._scenes.values()]
+        return [s.public() for s in self._scenes.values()]
+
+    def add_directory(self, directory: str | Path) -> list[str]:
+        """Register every ``<id>.xml`` in ``directory``. An optional ``<id>.json`` beside it may set ``settle_steps``,
+        ``description``, ``tags`` and ``hidden``. This is how a held-out set lives outside any repository."""
+        added = []
+        for path in sorted(Path(directory).glob("*.xml")):
+            meta_path = path.with_suffix(".json")
+            meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+            unknown = set(meta) - {"settle_steps", "description", "tags", "hidden"}
+            if unknown:
+                raise ContractError(f"{meta_path}: unknown keys {sorted(unknown)}")
+            added.append(self.add(Scene(path.stem, lambda p=path: p.read_text(), int(meta.get("settle_steps", 0)),
+                                        meta.get("description", ""), tuple(meta.get("tags", ())),
+                                        bool(meta.get("hidden", False)))).id)
+        return added
 
 
 def default_scenes() -> SceneRegistry:

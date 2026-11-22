@@ -31,9 +31,10 @@ def _table(result: dict) -> str:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="phost-lab")
+    ap = argparse.ArgumentParser(prog="phost-lab", allow_abbrev=False)     # --scene must never match --scene-dir
     ap.add_argument("--plugin", action="append", default=[], help="module exposing register(registry); repeatable")
     ap.add_argument("--scene-module", action="append", default=[], help="module exposing scenes(registry); repeatable")
+    ap.add_argument("--scene-dir", action="append", default=[], help="directory of <id>.xml scenes; repeatable")
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="print scenes and registered stages/implementations as JSON")
     v = sub.add_parser("validate", help="check a graph file against the registry")
@@ -58,7 +59,7 @@ def main(argv=None) -> int:
 def _dispatch(args) -> int:
     if args.command == "list":
         registry = load_registry(args.plugin)
-        print(json.dumps(dict(scenes=load_scenes(args.scene_module).describe(), registry=registry.describe()), indent=2))
+        print(json.dumps(dict(scenes=load_scenes(args.scene_module, args.scene_dir).describe(), registry=registry.describe()), indent=2))
         return 0
     graph = _load_graph(args.graph)
     registry = load_registry(list(graph.plugins) + args.plugin)
@@ -66,7 +67,7 @@ def _dispatch(args) -> int:
     if args.command == "validate":
         print(f"ok: graph '{graph.name}' with {len(graph.stages)} stage(s)")
         return 0
-    scene = load_scenes(args.scene_module).get(args.scene)
+    scene = load_scenes(args.scene_module, args.scene_dir).get(args.scene)
     config = RunConfig(worlds=tuple(args.worlds), steps=args.steps)
     if args.no_isolate:
         from .runner import run_graph
@@ -74,7 +75,7 @@ def _dispatch(args) -> int:
     else:
         from .isolate import run_isolated
         result = run_isolated(graph, args.scene, config, timeout=args.timeout, plugins=args.plugin,
-                              scene_modules=args.scene_module)
+                              scene_modules=args.scene_module, scene_dirs=args.scene_dir)
     if args.out:
         with open(args.out, "w") as stream:
             json.dump(result, stream, indent=1)

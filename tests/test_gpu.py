@@ -24,3 +24,38 @@ def test_native_graph_matches_itself(registry):
     cell, = out["cells"]
     assert out["pass"] and cell["stage_metrics"] == {}
     assert 0.5 < cell["speedup"] < 2.0               # native against native: timing noise only
+
+
+def test_progress_events_frames_and_gates_on_a_real_run(registry):
+    events = []
+    config = RunConfig(worlds=(1,), steps=6, launches=2, repeats=3, frame_every=2, max_frames=10)
+    out = run_graph(NATIVE, default_scenes().get("trampoline8:impact"), config, registry, on_progress=events.append)
+    assert [e["event"] for e in events] == ["start", "cell"]
+    assert events[0]["meta"]["timestep"] > 0 and events[0]["worlds"] == [1]
+    cell, = out["cells"]
+    assert events[1]["cell"]["worlds"] == cell["worlds"]
+    import mujoco
+    nq = mujoco.MjModel.from_xml_string(default_scenes().get("trampoline8:impact").xml()).nq
+    assert len(cell["frames"]) == 3                          # steps 0, 2 and 4 of 6
+    assert all(len(frame) == nq for frame in cell["frames"])
+    assert cell["frames"][0] != cell["frames"][-1]            # the scene is moving
+    assert cell["verdict"]["gates"]["finite"] is True
+
+
+def test_frames_are_capped_and_off_by_default(registry):
+    scene = default_scenes().get("trampoline8:impact")
+    off = run_graph(NATIVE, scene, FAST, registry)
+    assert "frames" not in off["cells"][0]
+    capped = run_graph(NATIVE, scene, RunConfig(worlds=(1,), steps=8, launches=2, repeats=3, frame_every=1, max_frames=4),
+                       registry)
+    assert len(capped["cells"][0]["frames"]) == 4
+
+
+def test_the_real_worker_streams_progress_before_the_result(tmp_path):
+    from phost_lab.isolate import run_isolated
+    (tmp_path / "held.xml").write_text(default_scenes().get("trampoline8:impact").xml())
+    (tmp_path / "held.json").write_text('{"hidden": true}')
+    events = []
+    out = run_isolated(NATIVE, "held", FAST, scene_dirs=[str(tmp_path)], on_progress=events.append, timeout=300)
+    assert [e["event"] for e in events] == ["start", "cell"]
+    assert out["pass"] and out["scene"] == "held" and out["scene_hidden"] is True

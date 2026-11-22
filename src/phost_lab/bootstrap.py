@@ -31,9 +31,12 @@ def load_registry(plugins: Iterable[str] = (), registry: phost.Registry | None =
     return registry
 
 
-def load_scenes(modules: Iterable[str] = ()) -> SceneRegistry:
-    """Default scenes plus any module's ``scenes(registry)`` additions (internal scenes live elsewhere)."""
+def load_scenes(modules: Iterable[str] = (), directories: Iterable[str] = ()) -> SceneRegistry:
+    """Default scenes, any module's ``scenes(registry)`` additions, and every ``*.xml`` scene in the given directories
+    (a held-out set lives in a directory that is not part of any repository)."""
     scenes = default_scenes()
     for name in modules:
         importlib.import_module(name).scenes(scenes)
+    for directory in directories:
+        scenes.add_directory(directory)
     return scenes

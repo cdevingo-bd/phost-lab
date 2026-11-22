@@ -11,6 +11,7 @@ import sys
 import traceback
 
 PREFIX = "PHOST_LAB_RESULT "
+PROGRESS = "PHOST_LAB_PROGRESS "
 
 
 def main() -> int:
@@ -22,9 +23,10 @@ def main() -> int:
 
         graph = GraphSpec.from_dict(request["graph"])
         registry = load_registry(list(graph.plugins) + list(request.get("plugins", ())))
-        scene = load_scenes(request.get("scene_modules", ())).get(request["scene"])
+        scene = load_scenes(request.get("scene_modules", ()), request.get("scene_dirs", ())).get(request["scene"])
         config = RunConfig(**{**request.get("config", {}), "worlds": tuple(request["config"]["worlds"])})
-        out = run_graph(graph, scene, config, registry)
+        progress = (lambda event: print(PROGRESS + json.dumps(event), flush=True)) if request.get("progress") else None
+        out = run_graph(graph, scene, config, registry, on_progress=progress)
         print(PREFIX + json.dumps(out), flush=True)
         return 0
     except BaseException as error:                       # report, never hide: the parent decides
