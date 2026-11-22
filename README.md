@@ -1,8 +1,12 @@
 # phost-lab
 
-Headless lab for [phost](https://github.com/cdevingo-bd/phost): describe which implementation sits on which stage (a graph, as
-JSON), run it on a named scene in an isolated process, and get one JSON result with step time,
-speedup, accuracy against a native control, per-stage metrics and a verdict.
+Run a graph of [phost](https://github.com/cdevingo-bd/phost) implementations on a scene, in an isolated worker, and get one
+JSON result: step time, speedup, accuracy against a native control, per-stage metrics and a verdict. A graph says which
+implementation sits on which stage.
+
+Three reports need no implementation: `profile` times each phase of the step as its own CUDA graph, `opportunities` gives
+each stage's share of the step and the most a replacement could gain, and `applicability` says which stages apply to which
+scenes and why not.
 
 ```
 phost-lab --plugin phost_coupledchol.phost_impl list

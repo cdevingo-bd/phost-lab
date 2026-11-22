@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "phost-lab"
 version = "0.1.0.dev0"
-description = "Headless lab for phost: graph specs, scenes, an isolated runner and metrics"
+description = "Run a graph of phost implementations on a scene in an isolated worker: step time, speedup, accuracy against a native control, per-phase profile, and where a change can apply."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
