@@ -24,7 +24,7 @@ def run_isolated(graph: GraphSpec, scene: str, config: RunConfig, *, timeout: fl
     """Returns the runner's result dict, or ``{"error": ..., "pass": False}`` if the worker failed.
 
     ``on_progress`` receives the worker's progress events as they happen. Setting ``cancel`` kills the worker.
-    ``env`` adds environment variables for the worker alone. ``live`` (``steps``, ``every``, ``max_frames``) makes it a
+    ``env`` adds environment variables for the worker alone (a ``PYTHONPATH`` in it puts its entries ahead of this process's). ``live`` (``steps``, ``every``, ``max_frames``) makes it a
     live pass (see ``live.py``) instead of a timed run. ``report`` (``kinds``: names from ``opportunity.REPORTS``, and
     ``worlds``) makes it the analysis reports of ``opportunity.py`` instead; the graph and config are then not used, and
     the result is ``{kind: report}``.
@@ -36,7 +36,9 @@ def run_isolated(graph: GraphSpec, scene: str, config: RunConfig, *, timeout: fl
     request["config"]["worlds"] = list(config.worlds)
     request["config"]["calls"] = list(config.calls)
     # the worker sees the same modules as this process, so it runs the code that was asked for
-    worker_env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p), **(env or {}))
+    extra = dict(env or {})
+    path = os.pathsep.join(p for p in [extra.pop("PYTHONPATH", ""), *sys.path] if p)       # a PYTHONPATH in ``env`` adds to it
+    worker_env = {**os.environ, "PYTHONPATH": path, **extra}
     process = subprocess.Popen([python or sys.executable, "-m", "phost_lab.worker"], stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=worker_env,
                                start_new_session=True)

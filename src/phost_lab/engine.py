@@ -82,6 +82,10 @@ class Loaded(Protocol):
 class Engine(Protocol):
     name: str                    # the host name its stages are bound to (``GraphSpec.host``)
     doc: str
+    suffix: str                  # the file suffix of a scene for this engine in a scene directory (".xml" for MJCF)
+    capabilities: frozenset      # optional tools it offers: "profile", "live", "render" (see ``supports``)
+    device_kind: str             # optional, where it steps: "cpu" (several runs may share the machine) or "cuda"; absent: unknown,
+                                 # which a caller treats as one at a time
 
     def load(self, scene, *, settle: bool = True) -> Loaded:
         """Parse ``scene`` and (if ``settle``) run it to its start state. ``settle=False`` is for a report that needs the
@@ -152,6 +156,24 @@ def engine_for(scene, graph=None) -> Engine:
 _builtin_registered = False
 
 
+def supports(scene, capability: str) -> bool:
+    """Whether the engine a scene runs on offers an optional tool: ``profile`` (``Loaded.profile``: the phases of its step),
+    ``live`` (``Loaded.layout`` and ``Instance.pose``: something to draw) or ``render`` (frames drawn as images by the dashboard,
+    which only knows MuJoCo geometry)."""
+    return capability in getattr(get_engine(scene.engine), "capabilities", frozenset())
+
+
+def require_capability(scene, capability: str, tool: str) -> None:
+    """Refuse a tool the scene's engine does not offer, naming the engines that do."""
+    if not supports(scene, capability):
+        offering = sorted(n for n, e in engines().items() if capability in getattr(e, "capabilities", frozenset()))
+        raise ContractError(f"{tool} is not offered by the {scene.engine!r} engine (scene {scene.id!r}); engines that offer it: "
+                            f"{', '.join(offering) or 'none'}")
+
+
+_builtin_registered = False
+
+
 def require_engine(scene, name: str, tool: str, why: str) -> None:
     """Refuse a tool that only one engine's scenes make sense for (``why`` says what it needs)."""
     if scene.engine != name:
@@ -164,9 +186,16 @@ def _register_builtin() -> None:
     if _builtin_registered:
         return
     _builtin_registered = True
-    from .engines import chain, mjwarp
+    from .engines import chain, jaxchain, mjwarp
     register_engine(mjwarp.MJWarpEngine())
     register_engine(chain.ChainEngine())
+    register_engine(jaxchain.JaxChainEngine())
+
+
+def unavailable(scene) -> str | None:
+    """Why the engine a scene runs on cannot be used on this machine (its simulator is not installed), or None."""
+    check = getattr(get_engine(scene.engine), "unavailable", None)
+    return check() if check is not None else None
 
 
 def engines() -> dict[str, Engine]:

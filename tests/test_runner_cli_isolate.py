@@ -135,6 +135,14 @@ def test_isolated_timeout_is_reported(tmp_path):
     assert out["pass"] is False and "timed out" in out["error"]
 
 
+def test_a_pythonpath_in_env_adds_to_the_workers_path_and_does_not_replace_it(tmp_path):
+    marker = tmp_path / "registered"
+    (tmp_path / "late_plugin.py").write_text(f"def register(registry):\n    open({str(marker)!r}, 'w').write('yes')\n")
+    out = run_isolated(GraphSpec("g", host="chain"), "chain32:pluck", RunConfig(worlds=(1,), steps=3, launches=1, repeats=2),
+                       plugins=["late_plugin"], env={"PYTHONPATH": str(tmp_path)}, timeout=120)
+    assert "error" not in out and out["cells"] and marker.read_text() == "yes"      # the plugin was found, and so was phost_lab
+
+
 # ---- model-changing graphs are not compared with native ----
 
 @pytest.fixture

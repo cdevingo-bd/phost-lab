@@ -18,9 +18,11 @@ from phost.testing import runtimes
 
 from phost_lab import GraphSpec, NATIVE, Node, Scene, SceneRegistry, default_scenes
 from phost_lab.bootstrap import load_registry
-from phost_lab.engine import CpuDevice, ENGINES, engine_for, engines, get_engine, register_engine, require_engine
+from phost_lab.engine import CpuDevice, ENGINES, engine_for, engines, get_engine, register_engine, require_capability, supports
 from phost_lab.engines import chain as chain_engine
 from phost_lab.opportunity import applicability, opportunities, opportunities_table, scene_for, structure, structure_table
+from phost_lab.live import LiveConfig, run_live
+from phost_lab.profile import profile_scene, table as profile_table
 from phost_lab.runner import RunConfig, run_graph
 
 QUICK = RunConfig(worlds=(1, 2), steps=10, launches=2, repeats=3)
@@ -189,16 +191,83 @@ def test_scene_for_finds_the_first_scene_whose_host_accepts_the_stage(registry):
     assert scene_for("body.wrench", scenes, registry) is None             # a chain has no bodies
 
 
-def test_tools_that_need_mujoco_say_so_on_a_chain_scene(registry, scene):
-    from phost_lab.live import run_live
-    from phost_lab.profile import profile_scene
+def test_an_engine_declares_which_optional_tools_it_offers(registry, scene):
+    assert supports(scene, "profile") and supports(scene, "live") and not supports(scene, "render")      # drawn by the dashboard: MuJoCo only
+    assert supports(Scene("m", lambda: "<mujoco/>"), "render")
+    bare = Scene("bare", scene.xml, engine="test-bare")
 
-    with pytest.raises(ContractError, match="the live view needs MuJoCo geometry"):
-        run_live(NATIVE, scene, registry=registry)
-    with pytest.raises(ContractError, match="the phase profile needs the phases of mjw.step"):
-        profile_scene(NATIVE, scene, (1,), registry)
-    with pytest.raises(ContractError, match="'mjwarp' engine"):
-        require_engine(scene, "mjwarp", "a tool", "something")
+    class Bare:
+        name, doc, suffix, capabilities = "test-bare", "no tools", ".bare", frozenset()
+
+    try:
+        register_engine(Bare())
+        with pytest.raises(ContractError, match="the live view is not offered by the 'test-bare' engine.*chain, mjwarp"):
+            require_capability(bare, "live", "the live view")
+    finally:
+        ENGINES.pop("test-bare", None)
+
+
+# ---- the tools an engine offers ---------------------------------------------------------------------
+
+def test_the_phase_profile_runs_on_the_chains_own_phases(registry, scene):
+    out = profile_scene(graph("ref"), scene, (1,), registry, launches=2, repeats=3)
+    assert out["engine"] == "chain" and out["integrator"] == "linearly-implicit-euler" and out["nv"] == 24
+    for variant in out["cells"][0]["variants"].values():
+        assert list(variant["phases"]) == ["passive force", "actuation", "assemble", "effective solve", "integrate"]
+        assert variant["full_ms"] > 0 and variant["effective_ms"] is None and variant["phase_sum_ms"] > 0
+    assert set(out["cells"][0]["variants"]) == {"native", "graph"}
+    assert "effective solve" in profile_table(out) and "full step (one replay)" in profile_table(out)
+
+
+def test_the_profile_restores_the_state_the_integrate_phase_would_otherwise_run_away_with(registry, scene):
+    out = profile_scene(NATIVE, scene, (2,), registry, launches=5, repeats=3)
+    phases = out["cells"][0]["variants"]["native"]["phases"]
+    assert all(v >= 0 and v == v for v in phases.values())                     # finite, non-negative after the restore cost
+
+
+def test_the_live_view_draws_the_chains_particles_and_measures_how_far_a_graph_drifts(registry, scene):
+    events = []
+    out = run_live(graph("ref"), scene, LiveConfig(steps=30, every=5), registry, on_progress=events.append)
+    layout = events[0]
+    assert layout["event"] == "layout" and len(layout["geoms"]) == 24 and layout["flexes"] == [] and layout["timestep"] == 0.01
+    frames = [e for e in events if e["event"] == "live"]
+    assert len(frames) == 6 and len(frames[0]["native"]["x"]) == 72 and frames[0]["finite"]
+    assert out["noise"] == 0.0 and out["drift"] < 1e-5                          # native repeats exactly; a correct solve stays on it
+    assert out["meta"]["device"] == "cpu (numpy)" and out["stage_metrics"][es.NAME]["status"] == 0
+    wrong = run_live(graph("wrong"), scene, LiveConfig(steps=30, every=5), registry)
+    assert wrong["drift"] > 1e-4
+
+
+def test_a_held_out_chain_scene_is_never_drawn(registry):
+    hidden = Scene("held", lambda: chain_engine.chain_text(8, 1), engine="chain", hidden=True)
+    with pytest.raises(ContractError, match="never drawn"):
+        run_live(NATIVE, hidden, registry=registry)
+
+
+# ---- scene directories --------------------------------------------------------------------------------
+
+def test_a_scene_directory_carries_scenes_for_every_engine(tmp_path, registry):
+    (tmp_path / "ring.chain").write_text(chain_engine.chain_text(12, 1, pluck_at=3))
+    (tmp_path / "ring.json").write_text(json.dumps(dict(hidden=True, settle_steps=3, tags=["held"])))
+    (tmp_path / "ball.xml").write_text("<mujoco/>")
+    scenes = SceneRegistry()
+    assert scenes.add_directory(tmp_path) == ["ball", "ring"]
+    ring, ball = scenes.get("ring"), scenes.get("ball")
+    assert ring.engine == "chain" and ring.hidden and ring.settle_steps == 3 and ball.engine == "mjwarp"
+    assert scenes.describe()[1] == dict(id="ring", hidden=True, description="", settle_steps=0, tags=[])     # nothing shown
+    result = run_graph(NATIVE, ring, RunConfig(worlds=(1,), steps=3, launches=1, repeats=2), registry)
+    assert result["pass"] and result["meta"]["nv"] == 12 and result["scene_hidden"] is True
+
+
+def test_a_scene_directory_refuses_a_scene_in_two_formats_and_a_metadata_engine_that_disagrees(tmp_path):
+    (tmp_path / "x.chain").write_text(chain_engine.chain_text(8, 1))
+    (tmp_path / "x.xml").write_text("<mujoco/>")
+    with pytest.raises(ContractError, match="'x' is in both"):
+        SceneRegistry().add_directory(tmp_path)
+    (tmp_path / "x.xml").unlink()
+    (tmp_path / "x.json").write_text(json.dumps(dict(engine="mjwarp")))
+    with pytest.raises(ContractError, match="engine 'mjwarp', but x.chain is a scene for 'chain'"):
+        SceneRegistry().add_directory(tmp_path)
 
 
 # ---- a third party's engine -------------------------------------------------------------------------

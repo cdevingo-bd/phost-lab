@@ -89,7 +89,8 @@ def test_live_frames_stop_at_the_cap(registry):
 
 
 def test_profile_times_every_phase_and_finds_the_effective_solve_only_under_the_discrete_integrator():
-    from phost_lab.profile import PHASES, profile_scene, table
+    from phost_lab.engines.mjwarp import PHASES
+    from phost_lab.profile import profile_scene, table
     scenes = default_scenes()
     flat = profile_scene(NATIVE, scenes.get("trampoline8:impact"), (1,), launches=2, repeats=3)
     discrete = profile_scene(NATIVE, scenes.get("trampoline8:discrete"), (1,), launches=2, repeats=3)

@@ -19,7 +19,7 @@ from typing import Any
 
 import phost
 
-from .engine import engine_for
+from .engine import engine_for, unavailable
 from .scene import Scene, SceneRegistry
 
 
@@ -38,7 +38,7 @@ def applicability(registry: phost.Registry, scenes: SceneRegistry, scene_ids: li
     still refuse a model the stage accepts (the coupled-block Cholesky refuses nv above 512).
     """
     out: dict[str, Any] = dict(scenes={})
-    for scene_id in scene_ids or [s["id"] for s in scenes.describe() if not s["hidden"]]:
+    for scene_id in scene_ids or [s["id"] for s in scenes.describe() if not s["hidden"] and not unavailable(scenes.get(s["id"]))]:
         host, meta = _build(scenes.get(scene_id), 1, settle=False)
         facts = host.facts()
         stages = {}
@@ -59,10 +59,11 @@ def scene_for(stage: str, scenes: SceneRegistry, registry: phost.Registry | None
     which at least one non-native implementation of it applies; None if there is none.
 
     The registry's order is its owner's statement of which scene to try first, so a stage that only applies to some
-    models lands on the first scene that has them, without a table of scene names per stage.
+    models lands on the first scene that has them, without a table of scene names per stage. A scene whose simulator is not
+    installed on this machine is skipped.
     """
     for described in scenes.describe():
-        if described["hidden"]:
+        if described["hidden"] or unavailable(scenes.get(described["id"])):      # a scene whose simulator is not here is skipped
             continue
         host, _ = _build(scenes.get(described["id"]), 1, settle=False)
         if stage not in host.stages() or host.refusal(stage):

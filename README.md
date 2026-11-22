@@ -156,11 +156,15 @@ instance.step() / reset() / state() / frame()
 loaded.device                          synchronize, capture, how busy, the cost of launching nothing
 ```
 
-Two engines ship. `mjwarp` is MuJoCo Warp on a CUDA device and is what every scene used until now. `chain` is a damped
+Three engines ship. `mjwarp` is MuJoCo Warp on a CUDA device and is what every scene used until now. `chain` is a damped
 spring-mass chain stepped in NumPy (`phost.hosts.chain`): no GPU, no MuJoCo, its arrays called `x`, `v` and `a`, and an
 effective system that is a band of half-width 1. It offers the stages a chain has (passive force, control law, probe and the
 banded effective solve) and not the ones it has no use for (`body.wrench`, `newton.linear_solve`), and the same typed
-equations, implementations and checks run on it. It exists to show the boundary is not MuJoCo's.
+equations, implementations and checks run on it. It exists to show the boundary is not MuJoCo's. `jaxchain` is the same chain
+over JAX arrays (`phost.hosts.jaxchain`): arrays that cannot be written in place, a step that compiles, and a device whose
+`capture` is an ahead-of-time compile. It needs `jax` (`engines()["jaxchain"].unavailable()` says so when it is missing, and
+the reports skip its scenes). A numpy-only stage cannot be traced, so the `graph` driver refuses one with a message that says
+to use `eager`.
 
 A scene names its engine (`Scene.engine`, default `mjwarp`) and a graph names the host its stages are bound to
 (`GraphSpec.host`); a graph with stages that does not match the scene's engine is refused before anything loads. Three
@@ -172,14 +176,22 @@ things follow from an engine being a different simulator:
   does repeat exactly, so that yardstick is zero and a ratio to it says nothing; an engine that reports `repeatable` is
   measured against a rounding floor instead (`cell.accuracy_basis`, `runner.ROUNDING_FLOOR`), and a wrong swap still fails.
 * **The tools.** `opportunities`, `sparsity` and `applicability` read a scene through its engine. `profile` (the phases of
-  `mjw.step`) and the live view (MuJoCo geometry) are tools for the `mjwarp` engine and say so on any other.
+  a step) and the live view (something to draw) are optional: an engine lists what it offers in `Engine.capabilities`
+  (`profile`, `live`, `render`), and `supports(scene, capability)` / `require_capability` say what a scene can do. `mjwarp` offers
+  all three; `chain` and `jaxchain` offer `profile` (the phases of their step) and `live` (the particles as spheres), and not
+  `render`, which draws MuJoCo geometry as images. A tool an engine does not offer refuses with the engines that do.
+* **Where it runs.** An engine may say `device_kind` (`cpu` or `cuda`). A tool that wants to run several things at once (phost-agent's
+  CPU checks) does so only on `cpu`; an engine that does not say is treated as one at a time.
+* **Scene files.** `SceneRegistry.add_directory` reads `<id>.xml` for `mjwarp`, `<id>.chain` for `chain` and `<id>.jaxchain` for
+  `jaxchain` (each engine names its own `suffix`), with an optional `<id>.json` beside it for `settle_steps`, `description`, `tags` and
+  `hidden`. A name in two engines is refused.
 
 ```
 phost-lab run examples/pd_chain.json --scene chain32:pluck      # on the CPU: the graph's host is "chain"
 ```
 
-A plugin adds an engine with `register_engine(...)` from its `register`; an engine over a framework that steps in JAX would
-give its device a `capture` that returns a jitted replay and leave the rest alone.
+A plugin adds an engine with `register_engine(...)` from its `register`. There is no MJX engine: `jaxchain` is a chain in JAX, and
+a MuJoCo model stepped by MJX is a different simulator that nobody has written an engine, a host or stage bindings for.
 
 ## How the host is stepped
 

@@ -106,24 +106,37 @@ class SceneRegistry:
         return [s.public() for s in self._scenes.values()]
 
     def add_directory(self, directory: str | Path) -> list[str]:
-        """Register every ``<id>.xml`` in ``directory``. An optional ``<id>.json`` beside it may set ``settle_steps``,
-        ``description``, ``tags``, ``hidden`` and ``engine``. This is how a held-out set lives outside any repository."""
+        """Register every scene file in ``directory``: ``<id>.xml`` for the ``mjwarp`` engine, ``<id>.chain`` for ``chain`` and so
+        on (each engine names its own suffix, ``Engine.suffix``). An optional ``<id>.json`` beside it may set ``settle_steps``,
+        ``description``, ``tags``, ``hidden`` and, for the MuJoCo engine, ``contacts`` and ``constraints``. This is how a held-out
+        set lives outside any repository, whichever simulator it is for."""
+        from .engine import engines
+
         added = []
-        for path in sorted(Path(directory).glob("*.xml")):
+        found = [(path, engine) for engine in engines().values() if getattr(engine, "suffix", None)
+                 for path in Path(directory).glob(f"*{engine.suffix}") if path.is_file()]
+        seen: dict[str, Path] = {}
+        for path, engine in sorted(found, key=lambda pair: pair[0]):
+            if path.stem in seen:
+                raise ContractError(f"scene {path.stem!r} is in both {seen[path.stem].name} and {path.name}")
+            seen[path.stem] = path
             meta_path = path.with_suffix(".json")
             meta = json.loads(meta_path.read_text()) if meta_path.is_file() else {}
             unknown = set(meta) - {"settle_steps", "description", "tags", "hidden", "contacts", "constraints", "engine"}
             if unknown:
                 raise ContractError(f"{meta_path}: unknown keys {sorted(unknown)}")
+            if meta.get("engine", engine.name) != engine.name:
+                raise ContractError(f"{meta_path}: engine {meta['engine']!r}, but {path.name} is a scene for {engine.name!r}")
             added.append(self.add(Scene(path.stem, lambda p=path: p.read_text(), int(meta.get("settle_steps", 0)),
                                         meta.get("description", ""), tuple(meta.get("tags", ())),
                                         bool(meta.get("hidden", False)), int(meta["contacts"]) if "contacts" in meta else None,
-                                        int(meta.get("constraints", 2048)), meta.get("engine", "mjwarp"))).id)
+                                        int(meta.get("constraints", 2048)), engine.name)).id)
         return added
 
 
 def default_scenes() -> SceneRegistry:
     from .engines.chain import scenes as chain_scenes
+    from .engines.jaxchain import scenes as jax_scenes
 
     reg = SceneRegistry()
     for n in (8, 12, 14):
@@ -144,4 +157,5 @@ def default_scenes() -> SceneRegistry:
     reg.add(Scene("arm7:swing", lambda: arm_xml(7), 0,
                   "7-link hinge chain with a motor per joint, released horizontal; nv=7, nu=7", ("actuated",)))
     chain_scenes(reg)
+    jax_scenes(reg)
     return reg

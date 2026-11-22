@@ -21,6 +21,8 @@ from phost import ContractError
 from ..engine import CpuDevice
 
 KEYS = {"n", "nu", "timestep", "stiffness", "damping", "gain", "seed", "pluck_at", "pluck_size"}
+SPACING, LIFT, RADIUS = 0.1, 0.5, 0.03      # how the chain is drawn: particles on a line, displacement shown vertically
+SHOWN = 2.0                                  # displacement is drawn this many times larger than it is
 
 
 def chain_text(n: int = 32, nu: int = 2, *, timestep: float = 0.01, stiffness: float = 400.0, damping: float = 0.2,
@@ -42,27 +44,53 @@ def parse(text: str) -> dict[str, Any]:
 
 class _Instance:
     def __init__(self, loaded: "_Loaded", worlds: int):
-        from phost.hosts.chain import ChainHost
-
         self._loaded, self.worlds = loaded, worlds
-        self.host = ChainHost(loaded.model, worlds=worlds)
+        self.host = loaded.make_host(worlds)
+        self.step = self.make_step()
         self.reset()
+
+    def make_step(self):
+        return self.host.step
 
     @property
     def data(self):
         return self.host.data
 
-    def step(self) -> None:
-        self.host.step()
-
     def reset(self) -> None:
         self.host.load(self._loaded.x, self._loaded.v)
 
     def state(self) -> np.ndarray:
-        return self.host.data.x.astype(np.float64)
+        return np.asarray(self.host.data.x, np.float64)
 
     def frame(self) -> list[float]:
-        return self.host.data.x[0].astype(np.float64).tolist()
+        return np.asarray(self.host.data.x, np.float64)[0].tolist()
+
+    def pose(self) -> dict:
+        """World 0's particles as sphere positions (the format a viewer draws): along a line, displaced vertically."""
+        x = np.asarray(self.host.data.x, np.float64)[0]
+        points = np.stack([np.arange(x.size) * SPACING, np.zeros(x.size), LIFT + SHOWN * x], axis=1)
+        return dict(x=np.round(points, 4).ravel().tolist(), r=[])
+
+
+def _phase_functions(instance) -> dict:
+    """The chain's step as named functions on one instance's data, through ``host.ns`` so an installed stage applies."""
+    host = instance.host
+    m, d, ns = host.model, host.data, host.ns
+    saved = (d.x.copy(), d.v.copy(), d.t.copy())
+
+    def restore():
+        d.x[:], d.v[:], d.t[:] = saved
+
+    def integrate():
+        h = np.float32(m.timestep)
+        d.v += h * d.a
+        d.x += h * d.v
+        d.t += h
+
+    phases = {"passive force": lambda: ns.passive(m, d), "actuation": lambda: ns.actuate(m, d),
+              "assemble": lambda: ns.assemble(m, d), "effective solve": lambda: ns.effective_solve(m, d, d.a),
+              "integrate": integrate}
+    return dict(phases=phases, restore=restore, restored=("integrate",), extra={})
 
 
 class _Loaded:
@@ -86,8 +114,8 @@ class _Loaded:
                 host.step()
             self.x, self.v = host.data.x[0].astype(np.float64), host.data.v[0].astype(np.float64)
         self.device = CpuDevice("cpu (numpy)")
-        self.meta = dict(numpy=np.__version__, device=self.device.name, nv=n, nu=self.model.nu,
-                         nefc_start=0, timestep=float(self.model.timestep), repeatable=True)
+        self.meta = dict(numpy=np.__version__, device=self.device.name, nv=n, nu=self.model.nu, nefc_start=0,
+                         timestep=float(self.model.timestep), integrator="linearly-implicit-euler", repeatable=True)
 
     def __enter__(self):
         return self
@@ -95,12 +123,30 @@ class _Loaded:
     def __exit__(self, *exc):
         return None
 
-    def instance(self, worlds: int) -> _Instance:
-        return _Instance(self, int(worlds))
+    def make_host(self, worlds: int):
+        from phost.hosts.chain import ChainHost
+        return ChainHost(self.model, worlds=worlds)
+
+    instance_class = _Instance
+
+    def instance(self, worlds: int):
+        return self.instance_class(self, int(worlds))
+
+    def layout(self) -> dict:
+        n, nu = self.model.nv, self.model.nu
+        geoms = [dict(type=2, size=[RADIUS, 0, 0], rgba=[0.9, 0.45, 0.2, 1.0] if i < nu else [0.25, 0.5, 0.9, 1.0],
+                      body=i + 1, turns=False) for i in range(n)]
+        return dict(geoms=geoms, flexes=[], bodies=n + 1)
+
+    def profile(self, instance: _Instance) -> dict:
+        return _phase_functions(instance)
 
 
 class ChainEngine:
     name = "chain"
+    suffix = ".chain"
+    capabilities = frozenset({"profile", "live"})
+    device_kind = "cpu"          # where it steps: "cpu" or "cuda" (what a tool may run alongside it)
     doc = "a damped spring-mass chain stepped in NumPy: no GPU, no MuJoCo"
 
     def load(self, scene, *, settle: bool = True) -> _Loaded:
