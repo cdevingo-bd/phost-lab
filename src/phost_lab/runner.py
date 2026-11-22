@@ -12,12 +12,13 @@ nothing; accuracy is then measured against ``ROUNDING_FLOOR``, the float32 round
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime
 import gc
 import statistics
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import numpy as np
 
@@ -50,6 +51,17 @@ class RunConfig:
         object.__setattr__(self, "calls", tuple(int(n) for n in self.calls))
         if any(n < 1 for n in self.calls):
             raise ValueError("calls must be positive step counts")
+
+    @classmethod
+    def from_recorded(cls, recorded: Mapping[str, Any]) -> "RunConfig":
+        """The settings a recorded result ran under, to run it again. A result's config also holds facts the run added about
+        itself, which are not settings (``driver_requested``: the driver that was asked for when the engine could not give it, so
+        ``driver`` is the one used). Those are dropped, and the driver asked for is asked for again."""
+        names = {f.name for f in dataclasses.fields(cls)}
+        values = {k: v for k, v in recorded.items() if k in names}
+        if recorded.get("driver_requested"):
+            values["driver"] = recorded["driver_requested"]
+        return cls(**{**values, "worlds": tuple(values.get("worlds", cls.worlds)), "calls": tuple(values.get("calls", ()))})
 
 
 def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost.Registry | None = None,

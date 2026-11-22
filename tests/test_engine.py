@@ -112,6 +112,8 @@ def test_the_native_graph_runs_on_the_chain_and_is_stepped_eagerly_with_the_reas
     assert result["pass"] and [c["worlds"] for c in result["cells"]] == [1, 2]
     assert result["config"]["driver"] == "eager" and result["config"]["driver_requested"] == "graph"
     assert "cannot capture" in result["meta"]["driver_note"]
+    again = RunConfig.from_recorded(result["config"])           # a recorded run can be run again: facts it noted are not settings
+    assert again.driver == "graph" and again.worlds == tuple(result["config"]["worlds"]) and again.steps == QUICK.steps
     assert result["meta"]["engine"] == "chain" and result["meta"]["device"] == "cpu (numpy)" and result["meta"]["nv"] == 24
     cell = result["cells"][0]
     assert cell["control_rms_dqpos"] == 0.0 and cell["rms_dqpos"] == 0.0         # native agrees with itself exactly
