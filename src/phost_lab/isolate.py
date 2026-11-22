@@ -31,6 +31,7 @@ def run_isolated(graph: GraphSpec, scene: str, config: RunConfig, *, timeout: fl
                    scene_dirs=list(scene_dirs), config=dataclasses.asdict(config), progress=on_progress is not None,
                    mode="live" if live is not None else "run", live=dict(live or {}))
     request["config"]["worlds"] = list(config.worlds)
+    request["config"]["calls"] = list(config.calls)
     # the worker sees the same modules as this process, so it runs the code that was asked for
     worker_env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p), **(env or {}))
     process = subprocess.Popen([python or sys.executable, "-m", "phost_lab.worker"], stdin=subprocess.PIPE,

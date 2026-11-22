@@ -102,3 +102,19 @@ def test_profile_times_every_phase_and_finds_the_effective_solve_only_under_the_
     assert discrete["cells"][0]["variants"]["native"]["effective_ms"] > 0
     text = table(discrete)
     assert "of which effective solve" in text and "trampoline8:discrete" in text and "native ms" in text
+
+
+def test_steps_per_call_reports_the_fixed_cost_of_a_call_and_survives_the_worker_round_trip():
+    from phost_lab.cli import _table
+    from phost_lab.isolate import run_isolated
+    config = RunConfig(worlds=(1,), steps=3, launches=2, repeats=3, calls=(1, 4, 8))
+    out = run_isolated(NATIVE, "trampoline8:impact", config, timeout=300)
+    assert "error" not in out, out
+    assert out["config"]["calls"] == [1, 4, 8]
+    pc = out["cells"][0]["per_call"]
+    assert pc["steps_per_call"] == [1, 4, 8]
+    for label in ("native", "graph"):
+        assert len(pc[label]["ms"]) == 3 and pc[label]["ms"][2] > pc[label]["ms"][0] > 0
+        assert pc[label]["fixed_ms"] >= 0 and pc[label]["per_step_ms"] > 0
+    assert len(pc["speedup"]) == 3
+    assert "fixed ms" in _table(out)

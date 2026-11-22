@@ -24,7 +24,8 @@ def main() -> int:
         graph = GraphSpec.from_dict(request["graph"])
         registry = load_registry(list(graph.plugins) + list(request.get("plugins", ())))
         scene = load_scenes(request.get("scene_modules", ()), request.get("scene_dirs", ())).get(request["scene"])
-        config = RunConfig(**{**request.get("config", {}), "worlds": tuple(request["config"]["worlds"])})
+        config = RunConfig(**{**request.get("config", {}), "worlds": tuple(request["config"]["worlds"]),
+                              "calls": tuple(request["config"].get("calls", ()))})
         progress = (lambda event: print(PROGRESS + json.dumps(event), flush=True)) if request.get("progress") else None
         if request.get("mode") == "live":
             from .live import LiveConfig, run_live

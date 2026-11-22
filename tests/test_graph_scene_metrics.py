@@ -86,3 +86,21 @@ def test_scene_xml_is_a_mujoco_model():
 def test_accuracy_ratio_is_undefined_when_the_control_is_noise():
     assert accuracy_ratio(1e-3, NOISE_FLOOR / 10) is None
     assert accuracy_ratio(2e-6, 1e-6) == pytest.approx(2.0)
+
+
+def test_per_call_separates_the_fixed_cost_from_the_per_step_cost():
+    from phost_lab.runner import per_call
+    line = lambda fixed, step: {n: fixed + n * step for n in (1, 5, 20)}
+    out = per_call(dict(native=line(2.0, 1.0), native2=line(2.0, 1.0), graph=line(2.0, 0.5)))
+    assert out["steps_per_call"] == [1, 5, 20]
+    assert abs(out["native"]["fixed_ms"] - 2.0) < 1e-9 and abs(out["native"]["per_step_ms"] - 1.0) < 1e-9
+    assert abs(out["graph"]["fixed_ms"] - 2.0) < 1e-9 and abs(out["graph"]["per_step_ms"] - 0.5) < 1e-9
+    assert out["speedup"][0] < out["speedup"][-1] < 2.0          # a fixed cost hides speed on short calls
+    assert per_call(dict(native={4: 8.0}, native2={4: 8.0}, graph={4: 4.0}))["native"]["per_step_ms"] == 2.0
+
+
+def test_run_config_normalizes_and_checks_calls():
+    from phost_lab.runner import RunConfig
+    assert RunConfig(calls=[1, 5]).calls == (1, 5)
+    with pytest.raises(ValueError):
+        RunConfig(calls=(0,))

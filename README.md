@@ -41,6 +41,25 @@ past the coupled-block solver's range (nv up to 512), which refuses it with an a
 A scene settles before it is timed. The settled state is cached on disk (`$PHOST_LAB_CACHE`, else
 `$XDG_CACHE_HOME/phost-lab`), keyed by the scene's XML and step count, so a large scene settles once.
 
+## Steps per call
+
+A rollout loop pays something on every call, not just every step. `--steps-per-call 1 5 20` also times calls of that many
+graph launches plus a sync, fits `fixed + n * per_step` to them, and reports both for the native step and the graph, with
+the speedup at each call length:
+
+```
+phost-lab run examples/effective_direct.json --scene trampoline12:discrete --worlds 1 --steps-per-call 1 5 20
+        per call (ms)            1        5       20   fixed ms  per-step ms
+          native             1.549    8.716   35.196      0.000       1.769
+          graph              2.840   15.201   61.006      0.000       3.059
+          speedup            0.55x    0.57x    0.58x
+```
+
+This measures a Warp graph-launch loop from Python, and there the fixed cost is below noise (the fit is clamped at zero).
+Anything a wrapper adds on top, such as converting state between frameworks on every call, shows up only if the wrapper is
+what is being timed. deform3d's notes put that at 4.5-6 ms per call for a JAX wrapper, which is more than a whole step here,
+so a speedup measured per step can read very differently from one measured per call.
+
 ## Where the time goes
 
 ```

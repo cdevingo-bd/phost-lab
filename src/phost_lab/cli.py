@@ -27,6 +27,14 @@ def _table(result: dict) -> str:
         rows.append(f"{c['worlds']:>7} {c['step_ms']:>9.3f} {c['native_ms']:>10.3f} {c['speedup']:>7.2f}x {ratio:>10} {c['native_spread']:>13.1%}  {verdict}")
         for note in c["verdict"]["notes"] + c["advisories"]:
             rows.append(f"        note: {note}")
+        if "per_call" in c:
+            pc = c["per_call"]
+            ns = pc["steps_per_call"]
+            rows.append(f"        per call (ms)    " + "".join(f"{n:>9}" for n in ns) + "   fixed ms  per-step ms")
+            for label in ("native", "graph"):
+                rows.append(f"          {label:<14} " + "".join(f"{ms:>9.3f}" for ms in pc[label]["ms"])
+                            + f"   {pc[label]['fixed_ms']:>8.3f}  {pc[label]['per_step_ms']:>10.3f}")
+            rows.append(f"          {'speedup':<14} " + "".join(f"{x:>8.2f}x" for x in pc["speedup"]))
     return "\n".join(rows)
 
 
@@ -44,6 +52,8 @@ def main(argv=None) -> int:
     r.add_argument("--scene", required=True)
     r.add_argument("--worlds", type=int, nargs="+", default=[1, 8])
     r.add_argument("--steps", type=int, default=20)
+    r.add_argument("--steps-per-call", type=int, nargs="+", default=[], metavar="N",
+                   help="also time calls of N graph launches (for example 1 5 20) and report the fixed cost of a call")
     r.add_argument("--out", help="write the full JSON result here")
     r.add_argument("--timeout", type=float, default=900.0)
     r.add_argument("--no-isolate", action="store_true", help="run in this process (faster, no crash isolation)")
@@ -83,7 +93,7 @@ def _dispatch(args) -> int:
         print(f"ok: graph '{graph.name}' with {len(graph.stages)} stage(s)")
         return 0
     scene = load_scenes(args.scene_module, args.scene_dir).get(args.scene)
-    config = RunConfig(worlds=tuple(args.worlds), steps=args.steps)
+    config = RunConfig(worlds=tuple(args.worlds), steps=args.steps, calls=tuple(args.steps_per_call))
     if args.no_isolate:
         from .runner import run_graph
         result = run_graph(graph, scene, config, registry)

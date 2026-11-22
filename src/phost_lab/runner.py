@@ -36,6 +36,12 @@ class RunConfig:
     max_native_spread: float = 0.10  # a cell noisier than this is reported as unreliable
     frame_every: int = 0             # keep world 0's qpos every this many replayed steps, for playback (0: none)
     max_frames: int = 60
+    calls: tuple[int, ...] = ()      # steps per call to time, e.g. (1, 5, 20); () skips the per-call curve
+
+    def __post_init__(self):
+        object.__setattr__(self, "calls", tuple(int(n) for n in self.calls))
+        if any(n < 1 for n in self.calls):
+            raise ValueError("calls must be positive step counts")
 
 
 def other_gpu_processes() -> int:
@@ -84,6 +90,20 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
             samples.append(1e3 * (time.perf_counter() - t) / config.launches)
         return statistics.median(samples)
 
+    def call_curve(g):
+        """Median wall time of one call of n graph launches plus a sync, for each n in ``config.calls``."""
+        curve = {}
+        for n in config.calls:
+            samples = []
+            for _ in range(config.repeats):
+                t = time.perf_counter()
+                for _ in range(n):
+                    wp.capture_launch(g)
+                wp.synchronize()
+                samples.append(1e3 * (time.perf_counter() - t))
+            curve[n] = statistics.median(samples)
+        return curve
+
     def reset(d, w):
         for field_name in ("qpos", "qvel"):
             getattr(d, field_name).assign(np.tile(getattr(cpu, field_name), (w, 1)).astype(np.float32))
@@ -91,7 +111,7 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
 
     result: dict[str, Any] = dict(
         graph=graph.to_dict(), scene=scene.id, scene_hidden=scene.hidden, stage_classes=stage_classes(graph, registry),
-        config=dict(worlds=list(config.worlds), steps=config.steps),
+        config=dict(worlds=list(config.worlds), steps=config.steps, **({"calls": list(config.calls)} if config.calls else {})),
         meta=dict(date=datetime.datetime.now().isoformat(timespec="seconds"), mujoco=mujoco.__version__,
                   warp=wp.config.version, device=wp.get_device("cuda:0").name, nv=int(model_cpu.nv),
                   nefc_start=int(cpu.nefc), timestep=float(model_cpu.opt.timestep),
@@ -102,7 +122,7 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
         model = mjw.put_model(model_cpu)
         for w in config.worlds:
             others = other_gpu_processes()
-            timings, finals, graphs, keep, frames = {}, {}, {}, [], []
+            timings, finals, graphs, keep, frames, curves = {}, {}, {}, [], [], {}
             for name in ("native", "graph", "native2"):
                 d = mjw.put_data(model_cpu, cpu, nworld=w, nconmax=scene.nconmax(w), njmax=scene.constraints)
                 session = None
@@ -114,6 +134,9 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
                     g = capture(lambda: mjw.step(model, d))
                 reset(d, w)
                 timings[name] = step_ms(g)
+                if config.calls:
+                    reset(d, w)
+                    curves[name] = call_curve(g)
                 reset(d, w)
                 if session is not None:
                     session.reset_metrics()
@@ -137,6 +160,8 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
                         native_spread=abs(timings["native"] - timings["native2"]) / native_ms,
                         rms_dqpos=diff, control_rms_dqpos=control, accuracy_ratio=ratio,
                         stage_metrics=stage_metrics, advisories=advisories, other_gpu_processes=others)
+            if config.calls:
+                cell["per_call"] = per_call(curves)
             if frames:
                 cell["frames"] = frames
             cell["verdict"] = _verdict(cell, finals["graph"], registry, graph, config)
@@ -147,6 +172,30 @@ def run_graph(graph: GraphSpec, scene: Scene, config: RunConfig, registry: phost
     result["comparable_to_native"] = comparable_to_native(graph, registry)
     result["pass"] = all(c["verdict"]["ok"] for c in result["cells"])
     return result
+
+
+def per_call(curves: dict) -> dict:
+    """What a rollout loop pays per call, from the time of calls of n steps.
+
+    Each variant's time for a call is modelled as ``fixed_ms + n * per_step_ms`` (a least-squares line through the
+    measured points; two points or more are needed to separate the two, one point reports the whole as per-step).
+    ``fixed_ms`` is the launch and synchronization cost of a call from Python: the floor under any wrapper that adds
+    its own state conversion. ``ms`` and ``speedup`` are lists aligned with ``steps_per_call``; ``speedup`` is native
+    over graph for a call of each length.
+    """
+    import numpy as np
+
+    native = {n: (curves["native"][n] + curves["native2"][n]) / 2 for n in curves["native"]}
+    out: dict[str, Any] = dict(steps_per_call=sorted(native), native={}, graph={}, speedup=[])
+    for label, curve in (("native", native), ("graph", curves["graph"])):
+        ns = sorted(curve)
+        if len(ns) >= 2:
+            per_step, fixed = np.polyfit(ns, [curve[n] for n in ns], 1)
+        else:
+            per_step, fixed = curve[ns[0]] / ns[0], 0.0
+        out[label] = dict(ms=[curve[n] for n in ns], fixed_ms=max(float(fixed), 0.0), per_step_ms=float(per_step))
+    out["speedup"] = [native[n] / curves["graph"][n] for n in sorted(native)]
+    return out
 
 
 def stage_classes(graph: GraphSpec, registry: phost.Registry) -> dict[str, str]:
