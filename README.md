@@ -1,6 +1,6 @@
 # phost-lab
 
-Headless lab for [phost](../phost): describe which implementation sits on which stage (a graph, as
+Headless lab for [phost](https://github.com/cdevingo-bd/phost): describe which implementation sits on which stage (a graph, as
 JSON), run it on a named scene in an isolated process, and get one JSON result with step time,
 speedup, accuracy against a native control, per-stage metrics and a verdict.
 
@@ -44,6 +44,6 @@ A scene settles before it is timed. The settled state is cached on disk (`$PHOST
 `layout` event once and a `live` event every few steps with both poses and how far the graph and the control are from
 native. The control is the yardstick: MJWarp is not bitwise repeatable, so "the graph is this far from native" only
 means something next to "native is this far from itself". It is for looking, not timing; the ordinary run does the
-timing. [phost-dash](../phost-dash) draws it.
+timing. [phost-dash](https://github.com/cdevingo-bd/phost-dash) draws it.
 
 MIT licensed.
