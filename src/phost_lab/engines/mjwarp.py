@@ -20,6 +20,30 @@ SPHERE, PLANE = 2, 0                  # mjtGeom values whose orientation does no
 PHASES = ("kinematics", "crb / armature", "collision", "make_constraint", "velocity+actuation+accel", "solver", "integrate")
 
 
+def settled(model, xml: str, steps: int, folder=None):
+    """``MjData`` for ``model`` after ``steps`` MuJoCo CPU steps and a forward pass, from the start-state cache when it has this
+    scene. The state depends on the model's text, the step count and the MuJoCo version, and on nothing else: those are the key."""
+    import mujoco
+    from .. import startcache
+
+    data = mujoco.MjData(model)
+    if steps > 0:
+        def fits(saved) -> bool:
+            return (set(saved) >= {"qpos", "qvel", "act", "time"} and saved["qpos"].shape == (model.nq,)
+                    and saved["qvel"].shape == (model.nv,) and saved["act"].shape == (model.na,)
+                    and all(np.isfinite(saved[name]).all() for name in ("qpos", "qvel", "act")))
+
+        def compute():
+            for _ in range(steps):
+                mujoco.mj_step(model, data)
+            return dict(qpos=data.qpos, qvel=data.qvel, act=data.act, time=data.time)
+
+        saved = startcache.cached((mujoco.__version__, steps, xml), compute, fits, folder)
+        data.qpos[:], data.qvel[:], data.act[:], data.time = saved["qpos"], saved["qvel"], saved["act"], float(saved["time"])
+    mujoco.mj_forward(model, data)
+    return data
+
+
 def other_gpu_processes() -> int:
     """Processes other than this one using the GPU, or -1 when it cannot be told."""
     try:
@@ -195,7 +219,6 @@ class _Loaded:
         import mujoco
         import mujoco_warp as mjw
         import warp as wp
-        from ..settle import settled
 
         self.scene, self.mjw, self._wp = scene, mjw, wp
         xml = scene.text()
@@ -223,6 +246,16 @@ class _Loaded:
 
     def instance(self, worlds: int) -> _Instance:
         return _Instance(self, int(worlds))
+
+    def check_host(self, worlds: int):
+        """A host a contract check can drive (``phost.testing.mjwarp``: the engine's host plus ``drive``), over ``worlds`` worlds
+        of this scene's start state. Call it inside ``with loaded:``, which opens the device scope."""
+        if self.model is None:
+            raise RuntimeError("enter the loaded scene (with loaded: ...) before asking it for a host")
+        from phost.testing.mjwarp import DrivableMJWarpHost
+        data = self.mjw.put_data(self.model_cpu, self.cpu, nworld=int(worlds), nconmax=self.scene.nconmax(int(worlds)),
+                                 njmax=self.scene.constraints)
+        return DrivableMJWarpHost(self.model, data, cpu_model=self.model_cpu, cpu_data=self.cpu)
 
     def layout(self) -> dict:
         """What a viewer needs to draw the scene once."""
@@ -258,3 +291,34 @@ class MJWarpEngine:
 
     def load(self, scene, *, settle: bool = True) -> _Loaded:
         return _Loaded(scene, settle)
+
+    def render_unavailable(self) -> str | None:
+        """Why frames cannot be drawn here: drawing needs MuJoCo's renderer, not a CUDA device."""
+        import importlib.util
+        return None if importlib.util.find_spec("mujoco") else "mujoco not installed"
+
+    def render(self, scene, frames, width: int, height: int):
+        """Draw each frame (a ``qpos`` vector) of ``scene`` as a ``(height, width, 3)`` uint8 image, from one fixed camera, with
+        MuJoCo's offscreen renderer (EGL, unless ``MUJOCO_GL`` says otherwise). A generator: the renderer closes when it ends."""
+        os.environ.setdefault("MUJOCO_GL", "egl")             # read when MuJoCo first loads its GL backend: set before it does
+        import mujoco
+
+        model = mujoco.MjModel.from_xml_string(scene.text())
+        data = mujoco.MjData(model)
+        camera = mujoco.MjvCamera()
+        mujoco.mjv_defaultFreeCamera(model, camera)
+        camera.lookat[:] = model.stat.center
+        camera.distance = 2.4 * model.stat.extent
+        camera.elevation, camera.azimuth = -25, 130
+        renderer = mujoco.Renderer(model, height=height, width=width)
+        try:
+            for index, frame in enumerate(frames):
+                qpos = np.asarray(frame, dtype=np.float64)
+                if qpos.shape != (model.nq,):
+                    raise ValueError(f"frame {index} has {qpos.size} values; the model has nq={model.nq}")
+                data.qpos[:] = qpos
+                mujoco.mj_forward(model, data)
+                renderer.update_scene(data, camera=camera)
+                yield renderer.render()
+        finally:
+            renderer.close()

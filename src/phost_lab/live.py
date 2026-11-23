@@ -23,7 +23,6 @@ import phost
 
 from .driver import resolve_driver
 from .engine import engine_for, require_capability
-from .engines.mjwarp import PLANE, SPHERE, layout, pose          # noqa: F401  (where they used to live)
 from .graph import GraphSpec
 from .scene import Scene
 

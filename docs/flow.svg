@@ -70,6 +70,8 @@
 <text x="176" y="268" class="small mono" text-anchor="start">the coordinates runs are compared on</text>
 <text x="34" y="282" class="small mono" text-anchor="start">device</text>
 <text x="176" y="282" class="small mono" text-anchor="start">synchronize, capture, busy, floor</text>
+<text x="34" y="296" class="small mono" text-anchor="start">optional</text>
+<text x="176" y="296" class="small mono" text-anchor="start">check_host, render, profile, live</text>
 <rect x="514" y="190" width="227" height="56" rx="3" class="hostbox"/>
 <text x="523" y="208" class="bold mono" text-anchor="start">mjwarp</text>
 <text x="523" y="225" class="small" text-anchor="start">MuJoCo Warp, on a CUDA device</text>

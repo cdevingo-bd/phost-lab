@@ -8,8 +8,7 @@ import pytest
 mujoco = pytest.importorskip("mujoco")
 
 from phost_lab import SceneRegistry, default_scenes
-from phost_lab.live import layout
-from phost_lab.settle import cache_dir, key, settled
+from phost_lab.engines.mjwarp import layout, settled
 from phost_lab.tank import SAIL_GRID, tank_xml, water_count
 
 BALL = "<mujoco><worldbody><body pos='0 0 1'><freejoint/><geom size='.1' mass='1'/></body></worldbody></mujoco>"
@@ -115,9 +114,15 @@ def test_zero_steps_touch_no_cache(tmp_path):
     assert not (tmp_path / "never").exists()
 
 
-def test_the_key_depends_on_model_steps_and_nothing_else_you_could_forget():
-    assert key(BALL, 100) == key(BALL, 100)
-    assert len({key(BALL, 100), key(BALL, 101), key(BALL.replace("mass='1'", "mass='2'"), 100)}) == 3
+def test_what_the_start_state_depends_on_is_the_models_text_and_the_step_count(tmp_path):
+    model = mujoco.MjModel.from_xml_string(BALL)
+    heavy = BALL.replace("mass='1'", "mass='2'")
+    settled(model, BALL, 100, tmp_path)
+    settled(model, BALL, 100, tmp_path)                                        # the same scene again: a read, not a new file
+    assert len(list(tmp_path.glob("*.npz"))) == 1
+    settled(model, BALL, 101, tmp_path)
+    settled(mujoco.MjModel.from_xml_string(heavy), heavy, 100, tmp_path)
+    assert len(list(tmp_path.glob("*.npz"))) == 3
 
 
 @pytest.mark.parametrize("damage", ["garbage", "wrong_shape", "nan"])
@@ -142,42 +147,3 @@ def test_an_unwritable_cache_does_not_stop_a_run(tmp_path):
     blocker.write_text("x")
     data = settled(mujoco.MjModel.from_xml_string(BALL), BALL, 20, blocker / "sub")        # cannot mkdir under a file
     assert data.time > 0
-
-
-def test_the_cache_folder_follows_the_environment(monkeypatch, tmp_path):
-    monkeypatch.setenv("PHOST_LAB_CACHE", str(tmp_path / "a"))
-    assert cache_dir() == tmp_path / "a"
-    monkeypatch.delenv("PHOST_LAB_CACHE")
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "x"))
-    assert cache_dir() == tmp_path / "x" / "phost-lab"
-
-
-# ---- scene folders can size their buffers ----
-
-def test_a_scene_folder_can_set_the_buffers(tmp_path):
-    (tmp_path / "big.xml").write_text(BALL)
-    (tmp_path / "big.json").write_text(json.dumps(dict(contacts=500, constraints=900)))
-    (tmp_path / "plain.xml").write_text(BALL)
-    reg = SceneRegistry()
-    reg.add_directory(tmp_path)
-    assert (reg.get("big").contacts, reg.get("big").constraints) == (500, 900)
-    assert reg.get("plain").contacts is None and reg.get("plain").nconmax(8) == 16 * 8 + 64     # the original sizing
-    assert reg.get("big").nconmax(8) == 500
-
-
-# ---- the layout a viewer draws from ----
-
-def test_layout_describes_every_geom_and_the_cloth_triangles():
-    model = mujoco.MjModel.from_xml_string(tank_xml())
-    out = layout(model)
-    assert len(out["geoms"]) == model.ngeom and out["bodies"] == model.nbody
-    assert sum(g["turns"] for g in out["geoms"]) == 15                      # hull, rails, crates, mast, boom: not the water
-    flex, = out["flexes"]
-    assert flex["vertnum"] == 64 and len(flex["tri"]) == 2 * (SAIL_GRID - 1) ** 2
-    assert max(max(t) for t in flex["tri"]) == 63 and all(len(set(t)) == 3 for t in flex["tri"])
-    json.dumps(out)
-
-
-def test_layout_of_a_scene_without_cloth_has_no_triangles():
-    out = layout(mujoco.MjModel.from_xml_string(default_scenes().get("arm7:swing").xml()))
-    assert out["flexes"] == [] and all(g["turns"] for g in out["geoms"])

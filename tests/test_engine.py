@@ -9,6 +9,7 @@ import subprocess
 import sys
 import os
 
+import numpy as np
 import pytest
 
 import phost
@@ -18,7 +19,8 @@ from phost.testing import runtimes
 
 from phost_lab import GraphSpec, NATIVE, Node, Scene, SceneRegistry, default_scenes
 from phost_lab.bootstrap import load_registry
-from phost_lab.engine import CpuDevice, ENGINES, engine_for, engines, get_engine, register_engine, require_capability, supports
+from phost_lab.engine import (CpuDevice, ENGINES, can_render, check_host, engine_for, engines, get_engine, register_engine,
+                              render_frames, require_capability, supports)
 from phost_lab.engines import chain as chain_engine
 from phost_lab.opportunity import applicability, opportunities, opportunities_table, scene_for, structure, structure_table
 from phost_lab.live import LiveConfig, run_live
@@ -207,6 +209,62 @@ def test_an_engine_declares_which_optional_tools_it_offers(registry, scene):
             require_capability(bare, "live", "the live view")
     finally:
         ENGINES.pop("test-bare", None)
+
+
+# ---- a host a contract check can drive, and frames drawn by an engine -------------------------------
+
+def test_a_contract_check_gets_its_host_from_the_engine_with_no_simulator_named_by_the_caller(registry, scene):
+    from phost import Selection
+    from phost.testing.contract import check_impl
+    with get_engine("chain").load(scene) as loaded:
+        host = check_host(loaded, 2)
+        assert hasattr(host, "drive") and host.facts().world_count == 2
+        verdict = check_impl(host, Selection("dof.passive_force", "dof.passive_force/spring-damper", dict(k=3.0, c=0.4)), registry)
+    assert verdict.ok, verdict.failures
+
+
+def test_an_engine_whose_ordinary_host_cannot_be_driven_says_how_to_get_one(scene):
+    class Plain:
+        host = object()
+        def instance(self, worlds):
+            return self
+    with pytest.raises(ContractError, match="cannot be driven by a contract check.*Loaded.check_host"):
+        check_host(Plain(), 1)
+
+    class Special(Plain):
+        def check_host(self, worlds):
+            return type("Drivable", (), dict(drive=lambda self, stage, **kw: None, worlds=worlds))()
+    assert check_host(Special(), 3).worlds == 3
+
+
+def test_frames_are_drawn_by_the_scenes_engine_or_refused_naming_the_engines_that_draw(scene):
+    class Painter:
+        name, doc, suffix, capabilities = "test-painter", "draws", ".paint", frozenset({"render"})
+        def render_unavailable(self):
+            return None
+        def render(self, scene, frames, width, height):
+            for index, _ in enumerate(frames):
+                yield np.full((height, width, 3), index, np.uint8)
+
+    class Blind(Painter):
+        name = "test-blind"
+        def render_unavailable(self):
+            return "no renderer on this machine"
+
+    painted, blind = Scene("p", scene.xml, engine="test-painter"), Scene("b", scene.xml, engine="test-blind")
+    try:
+        register_engine(Painter())
+        register_engine(Blind())
+        images = list(render_frames(painted, [[0.0], [1.0]], 4, 2))
+        assert [i.shape for i in images] == [(2, 4, 3)] * 2 and [int(i[0, 0, 0]) for i in images] == [0, 1]
+        with pytest.raises(ContractError, match="drawing frames is not offered by the 'chain' engine.*test-painter"):
+            render_frames(scene, [[0.0]], 4, 2)
+        with pytest.raises(ContractError, match="cannot draw frames here: no renderer on this machine"):
+            render_frames(blind, [[0.0]], 4, 2)
+        assert can_render()
+    finally:
+        ENGINES.pop("test-painter", None)
+        ENGINES.pop("test-blind", None)
 
 
 # ---- the tools an engine offers ---------------------------------------------------------------------

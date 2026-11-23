@@ -12,6 +12,12 @@ the opportunity reports and the drivers speak only this, so a new simulator is o
     instance.state()          -> (worlds, n) float64: the coordinates runs are compared on
     loaded.device                           synchronize, capture, how busy, the cost of launching nothing
 
+and, only if it has something to say about them, three optional tools (``Engine.capabilities`` names them):
+
+    loaded.check_host(worlds) -> Host       a host a contract check can drive, when the engine's ordinary host cannot be (``drive``)
+    engine.render(scene, frames, w, h)      frames drawn as (h, w, 3) uint8 images; ``render_unavailable()`` says why not here
+    loaded.profile(instance), loaded.layout() and instance.pose()      the phases of a step, and something to draw
+
 Three ship: ``mjwarp`` (MuJoCo Warp on a CUDA device; ``phost_lab.engines.mjwarp``), ``chain`` (a spring-mass chain
 stepped in NumPy; ``phost_lab.engines.chain``) and ``jaxchain`` (the same chain over JAX arrays, compiled by XLA;
 ``phost_lab.engines.jaxchain``); the chains exist to show the boundary is not MuJoCo's. A scene names its engine
@@ -92,6 +98,10 @@ class Engine(Protocol):
         """Parse ``scene`` and (if ``settle``) run it to its start state. ``settle=False`` is for a report that needs the
         model and not a state: applicability and structure."""
 
+    # optional, with the "render" capability:
+    #   render(scene, frames, width, height) -> iterator of (height, width, 3) uint8 arrays, one per frame (a coordinate vector)
+    #   render_unavailable() -> str | None    why frames cannot be drawn on this machine (a missing renderer), or None
+
 
 class CpuDevice:
     """A device with nothing to capture and nothing to wait for: plain Python or NumPy, stepped directly."""
@@ -159,9 +169,38 @@ _builtin_registered = False
 
 def supports(scene, capability: str) -> bool:
     """Whether the engine a scene runs on offers an optional tool: ``profile`` (``Loaded.profile``: the phases of its step),
-    ``live`` (``Loaded.layout`` and ``Instance.pose``: something to draw) or ``render`` (frames drawn as images by the dashboard,
-    which only knows MuJoCo geometry)."""
+    ``live`` (``Loaded.layout`` and ``Instance.pose``: something to draw) or ``render`` (``Engine.render``: frames drawn as images)."""
     return capability in getattr(get_engine(scene.engine), "capabilities", frozenset())
+
+
+def can_render() -> bool:
+    """Whether any registered engine that offers ``render`` can draw frames on this machine."""
+    return any("render" in getattr(e, "capabilities", frozenset()) and getattr(e, "render_unavailable", lambda: None)() is None
+               for e in engines().values())
+
+
+def render_frames(scene, frames, width: int, height: int):
+    """The frames of a run on ``scene`` drawn by its engine: an iterator of ``(height, width, 3)`` uint8 arrays. Refused, naming
+    the engines that can, when the scene's engine does not draw."""
+    require_capability(scene, "render", "drawing frames")
+    engine = get_engine(scene.engine)
+    why = getattr(engine, "render_unavailable", lambda: None)()
+    if why:
+        raise ContractError(f"the {engine.name!r} engine cannot draw frames here: {why}")
+    return engine.render(scene, frames, int(width), int(height))
+
+
+def check_host(loaded, worlds: int):
+    """A host over ``worlds`` worlds of a loaded scene that ``phost.testing.contract.check_impl`` can drive (it has ``drive``).
+
+    An engine whose ordinary host can be driven (the chains) needs to say nothing; one that needs more than its ordinary host
+    gives ``Loaded.check_host(worlds)`` (MuJoCo Warp adds ``drive`` over a state with contacts). Call it inside ``with loaded:``."""
+    make = getattr(loaded, "check_host", None)
+    host = make(int(worlds)) if make is not None else loaded.instance(int(worlds)).host
+    if not hasattr(host, "drive"):
+        raise ContractError(f"a {type(host).__name__} cannot be driven by a contract check (it has no drive()); the engine "
+                            f"gives a drivable host with Loaded.check_host(worlds)")
+    return host
 
 
 def require_capability(scene, capability: str, tool: str) -> None:

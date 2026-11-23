@@ -39,6 +39,12 @@ instance.step() / reset() / state() / frame()
 loaded.device                          synchronize, capture, how busy, the cost of launching nothing
 ```
 
+and three optional pieces an engine gives only if it has them: `loaded.check_host(worlds)` (a host a contract check can drive, when
+the engine's ordinary host cannot be: the chains' can, MuJoCo Warp's needs a driver over a state with contacts),
+`engine.render(scene, frames, w, h)` (frames drawn as images) with `render_unavailable()`, and `profile` / `layout` / `pose`.
+Everything outside an engine's own module goes through these: phost-author's and phost-agent's checkers get their hosts from
+`phost_lab.engine.check_host`, and phost-dash draws pictures with `render_frames`, so none of them names a simulator.
+
 Three engines ship. `mjwarp` is MuJoCo Warp on a CUDA device, the one that needs a GPU. `chain` is a damped
 spring-mass chain stepped in NumPy (`phost.hosts.chain`): no GPU, no MuJoCo, its arrays called `x`, `v` and `a`, and an
 effective system that is a band of half-width 1. It offers the stages a chain has (passive force, control law, probe and the
@@ -62,7 +68,8 @@ things follow from an engine being a different simulator:
   a step) and the live view (something to draw) are optional: an engine lists what it offers in `Engine.capabilities`
   (`profile`, `live`, `render`), and `supports(scene, capability)` / `require_capability` say what a scene can do. `mjwarp` offers
   all three; `chain` and `jaxchain` offer `profile` (the phases of their step) and `live` (the particles as spheres), and not
-  `render`, which draws MuJoCo geometry as images. A tool an engine does not offer refuses with the engines that do.
+  `render`: `mjwarp` draws frames with MuJoCo's offscreen renderer (it needs `mujoco`, not a CUDA device), and the chains have
+  nothing to draw with. A tool an engine does not offer refuses with the engines that do.
 * **Where it runs.** An engine may say `device_kind` (`cpu` or `cuda`). A tool that wants to run several things at once (phost-agent's
   CPU checks) does so only on `cpu`; an engine that does not say is treated as one at a time.
 * **Scene files.** `SceneRegistry.add_directory` reads `<id>.xml` for `mjwarp`, `<id>.chain` for `chain` and `<id>.jaxchain` for
@@ -103,8 +110,12 @@ A scene names its engine, and a graph is bound to that engine's host.
 floats because spheres hold it up. It is a busy scene that mixes contact, a flexible body and free bodies. It is also
 past the coupled-block solver's range (nv up to 512), which refuses it with an applicability error.
 
-A scene settles before it is timed. For a MuJoCo scene the settled state is cached on disk (`$PHOST_LAB_CACHE`, else
-`$XDG_CACHE_HOME/phost-lab`), keyed by the scene's XML and step count, so a large scene settles once.
+A scene settles before it is timed, which for a big MuJoCo scene takes about a minute. The lab keeps settled start states on disk
+(`phost_lab.startcache`: `$PHOST_LAB_CACHE`, else `$XDG_CACHE_HOME/phost-lab`) for any engine that asks. The cache knows no
+simulator: an engine names what its start state depends on, gives named arrays, and says whether a stored file fits (one that does
+not is recomputed and rewritten; a folder that cannot be written does not stop a run). The MuJoCo engine keys it by the scene's
+XML, the step count and MuJoCo's version; the chain engines settle their own scenes directly (the larger one loaded in 0.3 s) and do
+not use it.
 
 ## Steps per call
 
