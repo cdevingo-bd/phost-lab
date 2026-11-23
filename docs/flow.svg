@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 800" width="1000" height="800" role="img" aria-labelledby="ttl dsc">
+<title id="ttl">phost-lab: one graph on one scene, run in an isolated worker, becomes one JSON result</title>
+<desc id="dsc">A graph (which implementation sits on which stage, and the host its stages are bound to) and a scene (which names its engine) are checked to agree, then run through an Engine, the boundary between the lab and a simulator: MuJoCo Warp on CUDA, a NumPy chain on the CPU, a JAX chain compiled by XLA, or an engine you register. In an isolated worker process, for each world count, native, a second native copy as a control and the graph are run from the same start state through a driver, and timed and compared. The result is step time, speedup, accuracy against the control, per-stage metrics and a verdict. Four reports need no implementation: opportunities, applicability, sparsity and profile.</desc>
+<style>
+  :root { --bg:#ffffff; --ink:#1b1b1a; --ink2:#4a4945; --muted:#66645f; --line:#8c8a84; --rule:#d6d5cf;
+          --host:#efeeea; --accent:#1f5fbf; --accentfill:#e8f0fb; --onaccent:#ffffff; --warn:#8a4b00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161615; --ink:#ecebe7; --ink2:#c2c1ba; --muted:#8f8d86; --line:#77756f; --rule:#34332f;
+            --host:#242422; --accent:#6ea2f0; --accentfill:#1b2a40; --onaccent:#0d1726; --warn:#e0a458; }
+  }
+  text { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: var(--ink); font-size: 12px; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+  .title { font-size: 16px; font-weight: 700; }
+  .head { font-size: 13px; font-weight: 700; }
+  .sub { fill: var(--ink2); }
+  .small { font-size: 11px; fill: var(--ink2); }
+  .tag { font-size: 10.5px; fill: var(--muted); }
+  .bold { font-weight: 700; }
+  .acc { fill: var(--accent); }
+  .mut { fill: var(--muted); }
+  .warn { fill: var(--warn); }
+  .box { fill: var(--bg); stroke: var(--line); stroke-width: 1; }
+  .hostbox { fill: var(--host); stroke: var(--line); stroke-width: 1; }
+  .corebox { fill: var(--accentfill); stroke: var(--accent); stroke-width: 1; }
+  .ownbox { fill: var(--bg); stroke: var(--accent); stroke-width: 1.4; }
+  .yours { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 3; }
+  .frame { fill: none; stroke: var(--rule); stroke-width: 1; }
+  .rule { stroke: var(--rule); stroke-width: 1; fill: none; }
+  .ln { stroke: var(--line); stroke-width: 1; fill: none; }
+  .arrow { stroke: var(--ink2); stroke-width: 1.2; fill: none; marker-end: url(#h); }
+  .aarrow { stroke: var(--accent); stroke-width: 1.2; fill: none; marker-end: url(#ha); }
+  .back { stroke: var(--muted); stroke-width: 1; fill: none; stroke-dasharray: 3 3; marker-end: url(#h); }
+  .badge { fill: var(--accent); }
+  .badgetx { fill: var(--onaccent); font-size: 10.5px; font-weight: 700; text-anchor: middle; }
+</style>
+<defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,1 L9,5 L0,9 z" style="fill:var(--ink2)"/></marker><marker id="ha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,1 L9,5 L0,9 z" style="fill:var(--accent)"/></marker></defs>
+<rect x="0" y="0" width="1000" height="800" style="fill:var(--bg)"/>
+<text x="24" y="28" class="title" text-anchor="start">phost-lab: one graph on one scene, run in an isolated worker, becomes one JSON result</text>
+<rect x="24" y="50" width="16" height="16" rx="2" class="badge"/>
+<text x="32" y="62" class="badgetx">1</text>
+<text x="48" y="62" class="head" text-anchor="start">Inputs</text>
+<text x="102.0" y="62" class="sub" text-anchor="start">both are data; nothing is loaded until they agree</text>
+<rect x="24" y="76" width="300" height="64" rx="3" class="box"/>
+<text x="33" y="94" class="bold mono" text-anchor="start">graph</text>
+<text x="33" y="111" class="small mono" text-anchor="start">which implementation sits on which stage,</text>
+<text x="33" y="125" class="small mono" text-anchor="start">and the host those stages are bound to</text>
+<rect x="344" y="76" width="300" height="64" rx="3" class="box"/>
+<text x="353" y="94" class="bold mono" text-anchor="start">scene</text>
+<text x="353" y="111" class="small mono" text-anchor="start">an id, the engine that steps it, and the</text>
+<text x="353" y="125" class="small mono" text-anchor="start">steps to settle it before anything is timed</text>
+<rect x="664" y="76" width="312" height="64" rx="3" class="corebox"/>
+<text x="673" y="94" class="bold mono" text-anchor="start">checked first</text>
+<text x="673" y="111" class="small" text-anchor="start">a graph whose host is not the scene's</text>
+<text x="673" y="125" class="small" text-anchor="start">engine is refused, before anything loads</text>
+<path d="M326,108 L342,108" class="arrow"/>
+<path d="M646,108 L662,108" class="aarrow"/>
+<rect x="24" y="164" width="16" height="16" rx="2" class="badge"/>
+<text x="32" y="176" class="badgetx">2</text>
+<text x="48" y="176" class="head" text-anchor="start">Engine</text>
+<text x="102.0" y="176" class="sub" text-anchor="start">the boundary between the lab and a simulator; the runner, drivers and reports speak only this</text>
+<rect x="24" y="190" width="470" height="118" rx="3" class="corebox"/>
+<text x="33" y="208" class="bold mono" text-anchor="start">Engine</text>
+<text x="34" y="226" class="small mono" text-anchor="start">load(scene)</text>
+<text x="176" y="226" class="small mono" text-anchor="start">parse and settle, on the CPU</text>
+<text x="34" y="240" class="small mono" text-anchor="start">instance(worlds)</text>
+<text x="176" y="240" class="small mono" text-anchor="start">N worlds' data and a phost.Host</text>
+<text x="34" y="254" class="small mono" text-anchor="start">step() reset()</text>
+<text x="176" y="254" class="small mono" text-anchor="start">one step; back to the start</text>
+<text x="34" y="268" class="small mono" text-anchor="start">state()</text>
+<text x="176" y="268" class="small mono" text-anchor="start">the coordinates runs are compared on</text>
+<text x="34" y="282" class="small mono" text-anchor="start">device</text>
+<text x="176" y="282" class="small mono" text-anchor="start">synchronize, capture, busy, floor</text>
+<rect x="514" y="190" width="227" height="56" rx="3" class="hostbox"/>
+<text x="523" y="208" class="bold mono" text-anchor="start">mjwarp</text>
+<text x="523" y="225" class="small" text-anchor="start">MuJoCo Warp, on a CUDA device</text>
+<rect x="749" y="190" width="227" height="56" rx="3" class="hostbox"/>
+<text x="758" y="208" class="bold mono" text-anchor="start">chain</text>
+<text x="758" y="225" class="small" text-anchor="start">spring-mass chain, NumPy, CPU</text>
+<rect x="514" y="252" width="227" height="56" rx="3" class="hostbox"/>
+<text x="523" y="270" class="bold mono" text-anchor="start">jaxchain</text>
+<text x="523" y="287" class="small" text-anchor="start">the chain over JAX, XLA-compiled</text>
+<rect x="749" y="252" width="227" height="56" rx="3" class="yours"/>
+<text x="758" y="270" class="bold mono" text-anchor="start">your engine</text>
+<text x="758" y="287" class="small" text-anchor="start">register_engine(...) from a plugin</text>
+<text x="514" y="324" class="tag" text-anchor="start">three ship; a scene names its engine, a graph the host its stages are bound to</text>
+<path d="M496,249 L512,249" class="aarrow"/>
+<rect x="24" y="338" width="16" height="16" rx="2" class="badge"/>
+<text x="32" y="350" class="badgetx">3</text>
+<text x="48" y="350" class="head" text-anchor="start">Run</text>
+<text x="81.0" y="350" class="sub" text-anchor="start">per world count, from the same settled start state</text>
+<rect x="24" y="372" width="952" height="238" rx="4" class="frame"/>
+<text x="34" y="366" class="tag" text-anchor="start">isolated worker process: killed with its whole process group on a cancel or a timeout</text>
+<rect x="40" y="388" width="290" height="58" rx="3" class="box"/>
+<text x="49" y="406" class="bold mono" text-anchor="start">native</text>
+<text x="49" y="423" class="small" text-anchor="start">the host's own stages</text>
+<rect x="350" y="388" width="290" height="58" rx="3" class="box"/>
+<text x="359" y="406" class="bold mono" text-anchor="start">native control</text>
+<text x="359" y="423" class="small" text-anchor="start">a second copy of native: how far native</text>
+<text x="359" y="437" class="small" text-anchor="start">is from itself (the noise floor)</text>
+<rect x="660" y="388" width="290" height="58" rx="3" class="box"/>
+<text x="669" y="406" class="bold mono" text-anchor="start">graph under test</text>
+<text x="669" y="423" class="small" text-anchor="start">the graph's implementations</text>
+<text x="669" y="437" class="small" text-anchor="start">installed in a phost session</text>
+<path d="M330,417 L348,417" class="arrow"/>
+<path d="M640,417 L658,417" class="arrow"/>
+<text x="40" y="468" class="small" text-anchor="start">how a step is launched is a driver:</text>
+<rect x="40" y="478" width="190" height="58" rx="3" class="corebox"/>
+<text x="49" y="496" class="bold mono" text-anchor="start">driver</text>
+<text x="49" y="513" class="small" text-anchor="start">graph: capture, replay</text>
+<text x="49" y="527" class="small" text-anchor="start">eager: from Python; or yours</text>
+<rect x="262" y="478" width="214" height="58" rx="3" class="corebox"/>
+<text x="271" y="496" class="bold mono" text-anchor="start">time</text>
+<text x="271" y="513" class="small" text-anchor="start">launches x repeats; median</text>
+<text x="271" y="527" class="small" text-anchor="start">optionally steps per call</text>
+<rect x="508" y="478" width="230" height="58" rx="3" class="corebox"/>
+<text x="517" y="496" class="bold mono" text-anchor="start">accuracy</text>
+<text x="517" y="513" class="small" text-anchor="start">replay N steps, compare with native</text>
+<text x="517" y="527" class="small" text-anchor="start">against the control's noise floor</text>
+<rect x="770" y="478" width="190" height="58" rx="3" class="corebox"/>
+<text x="779" y="496" class="bold mono" text-anchor="start">per-stage metrics</text>
+<text x="779" y="513" class="small" text-anchor="start">what each implementation</text>
+<text x="779" y="527" class="small" text-anchor="start">reports about itself</text>
+<path d="M232,507 L260,507" class="aarrow"/>
+<path d="M478,507 L506,507" class="aarrow"/>
+<path d="M740,507 L768,507" class="aarrow"/>
+<text x="40" y="560" class="small" text-anchor="start">an engine whose native steps repeat exactly (the chains) is compared with a rounding floor, since a ratio to a zero</text>
+<text x="40" y="574" class="small" text-anchor="start">noise floor says nothing; a wrong swap still fails. An engine that cannot capture a step runs eagerly and the result says so.</text>
+<text x="40" y="596" class="small" text-anchor="start">Run on an idle device: the result records how many other GPU processes there were, and the spread of the two native runs.</text>
+<rect x="24" y="628" width="952" height="48" rx="3" class="ownbox"/>
+<text x="33" y="646" class="bold mono" text-anchor="start">result: one JSON</text>
+<text x="33" y="663" class="small" text-anchor="start">step ms and speedup at each world count, accuracy ratio, per-stage metrics, a verdict, and how reliable the timing was</text>
+<path d="M500,612 L500,626" class="aarrow"/>
+<rect x="24" y="700" width="16" height="16" rx="2" class="badge"/>
+<text x="32" y="712" class="badgetx">4</text>
+<text x="48" y="712" class="head" text-anchor="start">Reports</text>
+<text x="109.0" y="712" class="sub" text-anchor="start">need no implementation; each reads a scene through its engine</text>
+<rect x="24" y="724" width="229" height="58" rx="3" class="box"/>
+<text x="33" y="742" class="bold mono" text-anchor="start">opportunities</text>
+<text x="33" y="759" class="small" text-anchor="start">each stage's share of the step and</text>
+<text x="33" y="773" class="small" text-anchor="start">the ceiling 1/(1 - share)</text>
+<rect x="265" y="724" width="229" height="58" rx="3" class="box"/>
+<text x="274" y="742" class="bold mono" text-anchor="start">applicability</text>
+<text x="274" y="759" class="small" text-anchor="start">which stages apply to which scenes,</text>
+<text x="274" y="773" class="small" text-anchor="start">and why not</text>
+<rect x="506" y="724" width="229" height="58" rx="3" class="box"/>
+<text x="515" y="742" class="bold mono" text-anchor="start">sparsity</text>
+<text x="515" y="759" class="small" text-anchor="start">a stage's matrix pattern, and the</text>
+<text x="515" y="773" class="small" text-anchor="start">flop count of exploiting it</text>
+<rect x="747" y="724" width="229" height="58" rx="3" class="box"/>
+<text x="756" y="742" class="bold mono" text-anchor="start">profile</text>
+<text x="756" y="759" class="small" text-anchor="start">each phase of the step timed on its</text>
+<text x="756" y="773" class="small" text-anchor="start">own, if the engine offers it</text>
+</svg>

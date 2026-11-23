@@ -12,8 +12,9 @@ the opportunity reports and the drivers speak only this, so a new simulator is o
     instance.state()          -> (worlds, n) float64: the coordinates runs are compared on
     loaded.device                           synchronize, capture, how busy, the cost of launching nothing
 
-Two ship: ``mjwarp`` (MuJoCo Warp on a CUDA device; ``phost_lab.engines.mjwarp``) and ``chain`` (a spring-mass chain
-stepped in NumPy; ``phost_lab.engines.chain``), which exists to show the boundary is not MuJoCo's. A scene names its engine
+Three ship: ``mjwarp`` (MuJoCo Warp on a CUDA device; ``phost_lab.engines.mjwarp``), ``chain`` (a spring-mass chain
+stepped in NumPy; ``phost_lab.engines.chain``) and ``jaxchain`` (the same chain over JAX arrays, compiled by XLA;
+``phost_lab.engines.jaxchain``); the chains exist to show the boundary is not MuJoCo's. A scene names its engine
 (``Scene.engine``) and a graph names the host its stages are for (``GraphSpec.host``): they must agree, because stages
 are bound to a host by name.
 

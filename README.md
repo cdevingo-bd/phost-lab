@@ -2,49 +2,108 @@
 
 Run a graph of [phost](https://github.com/cdevingo-bd/phost) implementations on a scene, in an isolated worker, and get one
 JSON result: step time, speedup, accuracy against a native control, per-stage metrics and a verdict. A graph says which
-implementation sits on which stage.
+implementation sits on which stage. The simulator behind a scene is an **engine**: MuJoCo Warp on a CUDA GPU, a NumPy chain on the
+CPU, a JAX chain compiled by XLA, or one you register.
 
-Three reports need no implementation: `profile` times each phase of the step as its own CUDA graph, `opportunities` gives
-each stage's share of the step and the most a replacement could gain, and `applicability` says which stages apply to which
-scenes and why not.
+![A graph and a scene are checked to agree, then run through an Engine (mjwarp, chain, jaxchain or your own) in an isolated worker: native, a native control and the graph run from the same start state through a driver, timed and compared. The result is one JSON. Four reports need no implementation: opportunities, applicability, sparsity and profile.](docs/flow.svg)
+
+Reports that need no implementation: `opportunities` gives each stage's share of the step and the most a replacement could gain,
+`applicability` says which stages apply to which scenes and why not, `sparsity` says what a stage's matrix looks like, and
+`profile` times each phase of the step as its own graph, where the engine offers it.
 
 ```
+phost-lab run examples/pd_chain.json --scene chain32:pluck                      # a NumPy chain on the CPU: no GPU, no MuJoCo
 phost-lab --plugin phost_coupledchol.phost_impl list
 phost-lab validate examples/coupled.json
-phost-lab run examples/coupled.json --scene trampoline12:impact --worlds 1 8 32 --out result.json
+phost-lab run examples/coupled.json --scene trampoline12:impact --worlds 1 8 32 --out result.json    # MuJoCo Warp on a GPU
 ```
 
-A graph may select any phost stage (`phost-lab list` shows them). A graph with a model-changing stage is not
-gated on matching native, because the host is not the truth for it.
+A graph may select any phost stage (`phost-lab list` shows them), among those the scene's engine offers. A graph with a
+model-changing stage is not gated on matching native, because the host is not the truth for it.
 
-Accuracy is judged against the native-vs-native difference of the same run (MJWarp is not bitwise
-repeatable), and a ratio is reported only when that control is above rounding noise.
-Run on an idle GPU: the result records how many other GPU processes were running.
+Accuracy is judged against the native-vs-native difference of the same run, because a GPU simulator such as MuJoCo Warp is not
+bitwise repeatable; an engine whose steps do repeat is measured against a rounding floor instead (see [Engines](#engines)). A ratio
+is reported only when that control is above rounding noise. On a GPU, run on an idle device: the result records how many other GPU
+processes were running.
+
+## Engines
+
+A run needs a short list of things from a simulator, and none of them is MuJoCo: load a scene and settle it, make instances of
+it with some number of worlds, step one, reset it to the start, read its state, and say what device it runs on. An `Engine`
+(`phost_lab.engine`) provides them, and the runner, the reports and the drivers speak only that.
+
+```
+engine.load(scene)       -> Loaded     parse and settle on the CPU; entering it opens the device scope
+loaded.instance(worlds)  -> Instance   the data for that many worlds, and a phost.Host over it (instance.host)
+instance.step() / reset() / state() / frame()
+loaded.device                          synchronize, capture, how busy, the cost of launching nothing
+```
+
+Three engines ship. `mjwarp` is MuJoCo Warp on a CUDA device, the one that needs a GPU. `chain` is a damped
+spring-mass chain stepped in NumPy (`phost.hosts.chain`): no GPU, no MuJoCo, its arrays called `x`, `v` and `a`, and an
+effective system that is a band of half-width 1. It offers the stages a chain has (passive force, control law, probe and the
+banded effective solve) and not the ones it has no use for (`body.wrench`, `newton.linear_solve`), and the same typed
+equations, implementations and checks run on it. It exists to show the boundary is not MuJoCo's. `jaxchain` is the same chain
+over JAX arrays (`phost.hosts.jaxchain`): arrays that cannot be written in place, a step that compiles, and a device whose
+`capture` is an ahead-of-time compile. It needs `jax` (`engines()["jaxchain"].unavailable()` says so when it is missing, and
+the reports skip its scenes). A numpy-only stage cannot be traced, so the `graph` driver refuses one with a message that says
+to use `eager`.
+
+A scene names its engine (`Scene.engine`, default `mjwarp`) and a graph names the host its stages are bound to
+(`GraphSpec.host`); a graph with stages that does not match the scene's engine is refused before anything loads. Three
+things follow from an engine being a different simulator:
+
+* **The driver.** `graph` needs a device that can capture a step. On one that cannot, a run steps eagerly and says so
+  (`config.driver_requested`, `meta.driver_note`) rather than claim it replayed a graph.
+* **The noise floor.** MuJoCo Warp does not repeat exactly, so native against native is the yardstick for accuracy. A chain
+  does repeat exactly, so that yardstick is zero and a ratio to it says nothing; an engine that reports `repeatable` is
+  measured against a rounding floor instead (`cell.accuracy_basis`, `runner.ROUNDING_FLOOR`), and a wrong swap still fails.
+* **The tools.** `opportunities`, `sparsity` and `applicability` read a scene through its engine. `profile` (the phases of
+  a step) and the live view (something to draw) are optional: an engine lists what it offers in `Engine.capabilities`
+  (`profile`, `live`, `render`), and `supports(scene, capability)` / `require_capability` say what a scene can do. `mjwarp` offers
+  all three; `chain` and `jaxchain` offer `profile` (the phases of their step) and `live` (the particles as spheres), and not
+  `render`, which draws MuJoCo geometry as images. A tool an engine does not offer refuses with the engines that do.
+* **Where it runs.** An engine may say `device_kind` (`cpu` or `cuda`). A tool that wants to run several things at once (phost-agent's
+  CPU checks) does so only on `cpu`; an engine that does not say is treated as one at a time.
+* **Scene files.** `SceneRegistry.add_directory` reads `<id>.xml` for `mjwarp`, `<id>.chain` for `chain` and `<id>.jaxchain` for
+  `jaxchain` (each engine names its own `suffix`), with an optional `<id>.json` beside it for `settle_steps`, `description`, `tags` and
+  `hidden`. A name in two engines is refused.
+
+```
+phost-lab run examples/pd_chain.json --scene chain32:pluck      # on the CPU: the graph's host is "chain"
+```
+
+A plugin adds an engine with `register_engine(...)` from its `register`. There is no MJX engine: `jaxchain` is a chain in JAX, and
+a MuJoCo model stepped by MJX is a different simulator that nobody has written an engine, a host or stage bindings for.
 
 ## Examples
 
 | graph | scene | what it shows |
 | --- | --- | --- |
 | `examples/native.json` | any | the control: native against native reads 1.00x |
-| `examples/coupled.json`, `coupled_structural.json` | `trampoline12:impact` | the coupled-block Cholesky, 2.4x at nv=330 |
+| `examples/pd_chain.json` | `chain32:pluck` | a controller (model changing) on a NumPy simulator: no GPU, no MuJoCo |
+| `examples/coupled.json`, `coupled_structural.json` | `trampoline12:impact` | the coupled-block Cholesky on MuJoCo Warp, 2.4x at nv=330 |
 | `examples/effective_direct.json` | `trampoline12:discrete` | a direct solve of the discrete step's effective metric: **0.57x**, a swap that loses (see below) |
 | `examples/probe_peak.json` | `trampoline12:impact` | an observer: no measurable cost, trajectory unchanged |
-| `examples/pd_arm.json` | `arm7:swing` | a controller (model changing) |
-| `examples/pd_chain.json` | `chain32:pluck` | the same controller on a NumPy simulator: no GPU, no MuJoCo |
+| `examples/pd_arm.json` | `arm7:swing` | the same kind of controller on a MuJoCo arm |
 | `examples/spring_trampoline.json` | `trampoline12:impact` | a force law (model changing) |
 
 ## Scenes
 
-`trampoline8/12/14:impact|rest` (a flexible membrane with balls on it, nv 138 to 462), `trampoline8/12/14:discrete` (the
-same membrane under the discrete integrator, where the host solves an effective metric each step and the
-`effective.solve` stage applies), `arm7:swing`, `chain32:pluck` and `chain256:ringing` (a NumPy simulator, see
-[The simulator](#the-simulator)), and `tank:boat`:
-a glass tank that shuttles side to side with a boat in it, a cloth sail on the mast and three crates on the deck
+A scene names its engine, and a graph is bound to that engine's host.
+
+| engine | scenes |
+| --- | --- |
+| `chain` (NumPy, CPU) | `chain32:pluck`, `chain256:ringing`: 32 and 256 particles joined by springs; the effective system is a band of half-width 1 |
+| `jaxchain` (JAX, XLA) | `jaxchain32:pluck`: the 32-particle chain on JAX arrays, the same start state |
+| `mjwarp` (MuJoCo Warp, CUDA) | `trampoline8/12/14:impact\|rest` (a flexible membrane with balls on it, nv 138 to 462), `trampoline8/12/14:discrete` (the same membrane under the discrete integrator, where the host solves an effective metric each step and the `effective.solve` stage applies), `arm7:swing`, and `tank:boat` |
+
+`tank:boat` is a glass tank that shuttles side to side with a boat in it, a cloth sail on the mast and three crates on the deck
 (nv=622). **The water in `tank:boat` is 150 frictionless spheres, not a fluid**: MuJoCo has no fluid solver, and the boat
 floats because spheres hold it up. It is a busy scene that mixes contact, a flexible body and free bodies. It is also
 past the coupled-block solver's range (nv up to 512), which refuses it with an applicability error.
 
-A scene settles before it is timed. The settled state is cached on disk (`$PHOST_LAB_CACHE`, else
+A scene settles before it is timed. For a MuJoCo scene the settled state is cached on disk (`$PHOST_LAB_CACHE`, else
 `$XDG_CACHE_HOME/phost-lab`), keyed by the scene's XML and step count, so a large scene settles once.
 
 ## Steps per call
@@ -142,56 +201,6 @@ are coupled, so factoring only the coupled rows saves a quarter of the work, whi
 reordering needs a tenth. That is a count of operations: the replacement's kernel still has to be faster than the host's own
 iteration (see `profile`) for it to matter. An implementation gets the same pattern through the `sparsity` extension
 (phost's `docs/ADDING_A_STAGE.md`).
-
-## The simulator
-
-A run needs a short list of things from a simulator, and none of them is MuJoCo: load a scene and settle it, make instances of
-it with some number of worlds, step one, reset it to the start, read its state, and say what device it runs on. An `Engine`
-(`phost_lab.engine`) provides them, and the runner, the reports and the drivers speak only that.
-
-```
-engine.load(scene)       -> Loaded     parse and settle on the CPU; entering it opens the device scope
-loaded.instance(worlds)  -> Instance   the data for that many worlds, and a phost.Host over it (instance.host)
-instance.step() / reset() / state() / frame()
-loaded.device                          synchronize, capture, how busy, the cost of launching nothing
-```
-
-Three engines ship. `mjwarp` is MuJoCo Warp on a CUDA device and is what every scene used until now. `chain` is a damped
-spring-mass chain stepped in NumPy (`phost.hosts.chain`): no GPU, no MuJoCo, its arrays called `x`, `v` and `a`, and an
-effective system that is a band of half-width 1. It offers the stages a chain has (passive force, control law, probe and the
-banded effective solve) and not the ones it has no use for (`body.wrench`, `newton.linear_solve`), and the same typed
-equations, implementations and checks run on it. It exists to show the boundary is not MuJoCo's. `jaxchain` is the same chain
-over JAX arrays (`phost.hosts.jaxchain`): arrays that cannot be written in place, a step that compiles, and a device whose
-`capture` is an ahead-of-time compile. It needs `jax` (`engines()["jaxchain"].unavailable()` says so when it is missing, and
-the reports skip its scenes). A numpy-only stage cannot be traced, so the `graph` driver refuses one with a message that says
-to use `eager`.
-
-A scene names its engine (`Scene.engine`, default `mjwarp`) and a graph names the host its stages are bound to
-(`GraphSpec.host`); a graph with stages that does not match the scene's engine is refused before anything loads. Three
-things follow from an engine being a different simulator:
-
-* **The driver.** `graph` needs a device that can capture a step. On one that cannot, a run steps eagerly and says so
-  (`config.driver_requested`, `meta.driver_note`) rather than claim it replayed a graph.
-* **The noise floor.** MuJoCo Warp does not repeat exactly, so native against native is the yardstick for accuracy. A chain
-  does repeat exactly, so that yardstick is zero and a ratio to it says nothing; an engine that reports `repeatable` is
-  measured against a rounding floor instead (`cell.accuracy_basis`, `runner.ROUNDING_FLOOR`), and a wrong swap still fails.
-* **The tools.** `opportunities`, `sparsity` and `applicability` read a scene through its engine. `profile` (the phases of
-  a step) and the live view (something to draw) are optional: an engine lists what it offers in `Engine.capabilities`
-  (`profile`, `live`, `render`), and `supports(scene, capability)` / `require_capability` say what a scene can do. `mjwarp` offers
-  all three; `chain` and `jaxchain` offer `profile` (the phases of their step) and `live` (the particles as spheres), and not
-  `render`, which draws MuJoCo geometry as images. A tool an engine does not offer refuses with the engines that do.
-* **Where it runs.** An engine may say `device_kind` (`cpu` or `cuda`). A tool that wants to run several things at once (phost-agent's
-  CPU checks) does so only on `cpu`; an engine that does not say is treated as one at a time.
-* **Scene files.** `SceneRegistry.add_directory` reads `<id>.xml` for `mjwarp`, `<id>.chain` for `chain` and `<id>.jaxchain` for
-  `jaxchain` (each engine names its own `suffix`), with an optional `<id>.json` beside it for `settle_steps`, `description`, `tags` and
-  `hidden`. A name in two engines is refused.
-
-```
-phost-lab run examples/pd_chain.json --scene chain32:pluck      # on the CPU: the graph's host is "chain"
-```
-
-A plugin adds an engine with `register_engine(...)` from its `register`. There is no MJX engine: `jaxchain` is a chain in JAX, and
-a MuJoCo model stepped by MJX is a different simulator that nobody has written an engine, a host or stage bindings for.
 
 ## How the host is stepped
 
